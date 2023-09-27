@@ -382,7 +382,7 @@ static void _main_task(){
     strcat(m95.ota,m95.IMEI);
     strcat(m95.ota,"/OTA");
 
-    int64_t ble_timer = esp_timer_get_time() - 50000000;
+    int64_t ble_timer = esp_timer_get_time() - 170000000;
     int64_t OTA_timer = esp_timer_get_time() ;
     ble_scanner_init();
 
@@ -396,7 +396,7 @@ static void _main_task(){
             //ESP_LOGE("OTA ", "Version 1.1");
 		}
 
-        if(esp_timer_get_time() - ble_timer > 60000000){
+        if(esp_timer_get_time() - ble_timer > 180000000){
             ble_scanner_start();
 			vTaskDelay(1000/portTICK_PERIOD_MS);
             do{
