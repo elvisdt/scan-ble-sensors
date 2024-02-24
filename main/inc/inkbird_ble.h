@@ -13,14 +13,43 @@
 #include <string.h>
 
 
-#define MAX_BLE_DEVICES 5
+#define MAX_BLE_DEVICES 10
 
 typedef struct{
     char    Name[10];
     esp_bd_addr_t addr;
     uint8_t data_Hx[9];
     time_t  epoch_ts;
-}sensor_ble;
+}sens_ble_t;
+
+
+typedef struct {
+    char     mac[20];
+    float    temperature;
+    float    humidity;
+    float    battery;
+    time_t   time;
+}data_sens_t;
+
+
+
+typedef struct {
+    char name[50];
+    char phone[15];
+} sub_user_t;
+
+typedef struct {
+    char mac[20];
+    int id;
+    float tem;
+} sub_sens_t;
+
+typedef struct {
+    sub_user_t user;
+    sub_sens_t sens[MAX_BLE_DEVICES];
+    int sens_count;
+} sub_data_t;
+
 
 
 /**
@@ -30,7 +59,7 @@ typedef struct{
  *
  * @param devices Pointer to the buffer for storing device information.
  */
-void Inkbird_register_devices_buffer(sensor_ble *devices);
+void Inkbird_register_devices_buffer(sens_ble_t *devices);
 
 
 
@@ -44,7 +73,7 @@ void Inkbird_register_devices_buffer(sensor_ble *devices);
  * @param mac_addr MAC address to search for.
  * @return Index of the device in the array, or -1 if not found.
  */
-int Inkbird_mac_index(sensor_ble datos_guardados[MAX_BLE_DEVICES], esp_bd_addr_t mac_addr);
+int Inkbird_mac_index(sens_ble_t datos_guardados[MAX_BLE_DEVICES], esp_bd_addr_t mac_addr);
 
 
 
@@ -110,7 +139,7 @@ float Inkbird_battery(const uint8_t *manufacturer_data);
  * @param buffer Pointer to the output buffer to store the formatted string.
  * @return Pointer to the formatted string.
  */
-char *Inkbird_device_info(sensor_ble *sample, char *buffer);
+char *Inkbird_device_info(sens_ble_t *sample, char *buffer);
 
 
 
@@ -129,14 +158,14 @@ bool Inkbird_check_empty_mac(esp_bd_addr_t mac_addr);
 /**
  * @brief Converts MAC address from bytes to a string.
  *
- * This function converts a MAC address stored as bytes in sensor_ble to
+ * This function converts a MAC address stored as bytes in sens_ble_t to
  * a string representation.
  *
- * @param data Pointer to the sensor_ble structure.
+ * @param data Pointer to the sens_ble_t structure.
  * @param buffer Pointer to the output buffer to store the MAC address string.
- * @return Pointer to the MAC address string.
+ * @return 0 if successful.
  */
-char *Inkbird_MAC_to_str(sensor_ble *data, char *buffer);
+int Inkbird_MAC_to_str(sens_ble_t data, char *buffer);
 
 
 
@@ -166,13 +195,13 @@ uint8_t Inkbird_cmd(char *cmd, char *buffer_response);
 /**
  * @brief Imprime los datos de un sensor.
  *
- * Esta función toma un puntero a una estructura sensor_ble y 
+ * Esta función toma un puntero a una estructura sens_ble_t y 
  * luego imprime cada uno de los campos. Para los campos que son 
  * arrays de bytes (addr y data_Hx), se imprime cada byte en formato hexadecimal.
  *
- * @param device Un puntero a una estructura sensor_ble que contiene los datos del sensor.
+ * @param device Un puntero a una estructura sens_ble_t que contiene los datos del sensor.
  */
-void print_sensor_data(sensor_ble* devices);
+void print_sensor_data(sens_ble_t* devices);
 
 //char *Inkbird_trama_Mqtt(inkbird_sample *data, char *buffer);
 

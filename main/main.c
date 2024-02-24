@@ -25,7 +25,7 @@
 #include "driver/uart.h"
 #include "driver/gpio.h"
 #include <sys/time.h>
-
+#include "math.h"
 
 #include "inkbird_ble.h"
 #include "esp32_general.h"
@@ -41,9 +41,10 @@
 #include <cjson.h>
 #include "sdkconfig.h"
 
-/*--------------------------
-        DEFINITIONS          
----------------------------*/
+/*****************************************************
+ * DEFINITIONS    
+*****************************************************/
+
 
 // BLE ID
 #define PROFILE_A_APP_ID        0
@@ -51,39 +52,50 @@
 // Read packet timeout
 #define TAG                             "BLE"        // Nombre del TAG
 
+#define BUFFER_SIZE_DATA                (1024) // Define el tamaño del búfer según tus necesidades
 #define MODEM_TASK_STACK_SIZE           (2048)
 #define BUF_SIZE_MODEM                  (1024)
 #define RD_BUF_SIZE                     (BUF_SIZE_MODEM)
 
 
-#define MASTER_TOPIC "IVAN_BLE/" 
+#define MASTER_TOPIC "IVAN_BLE" 
 
 // RTC_DATA_ATTR int gpio_alarm;
 RTC_DATA_ATTR int status_led = 0;
 RTC_DATA_ATTR int status_modem = 0;
 
-/*--------------------------
-        STRUCTURES           
----------------------------*/
 
-struct datos_modem{
-    char    IMEI[25];
-    char    topic[50];
+// BLE
+#define SCAN_DURATION 20            // Duración del escaneo en segundos
+#define TARGET_DEVICE_NAME "sps"    // Nombre del dispositivo BLE 
+
+#define INTERVAL_OTA_SEG    120   // 60 SEG
+#define INTERVAL_MQTT_SEG   60   // 90 SEG
+#define INTERVAL_BLE_SCAN   120   // 30 SEG
+
+/*****************************************************
+ * ESTRUCTURAS
+*****************************************************/
+
+static esp_ble_scan_params_t ble_scan_params = {
+    // Inicializa aquí los parámetros de escaneo BLE
+    .scan_type              = BLE_SCAN_TYPE_ACTIVE,
+    .own_addr_type          = BLE_ADDR_TYPE_PUBLIC,
+    .scan_filter_policy     = BLE_SCAN_FILTER_ALLOW_ALL,
+    .scan_interval          = 0x200,
+    .scan_window            = 0x100,
+    .scan_duplicate         = BLE_SCAN_DUPLICATE_ENABLE
+    
 };
 
-struct datos_modem m95 = {
-                    .IMEI = "0",
-                    .topic = MASTER_TOPIC,
-                };
 
+/*****************************************************
+ * VARIABLES
+*****************************************************/
+static char     IMEI[25];
+static char     TopicData[100];
 
-
-
-/*--------------------------
-        VARIABLES           
----------------------------*/
 //---BLE--//
-
 
 cJSON *doc;                     // Formato JSON para enviar confirmacion de OTA
                                 // al servidor OTA
@@ -97,9 +109,6 @@ TaskHandle_t M95_Task_handle = NULL;
 nvs_handle_t storage_nvs_handle;
 esp_err_t err;
 
-int ota_value=0;                 // Valor para saber si el usuario quiere programar por OTA
-                                // mediante suscripcion al topico /OTA
-
 int end_task_uart_m95; 
 
 struct timeval tv;
@@ -107,8 +116,8 @@ struct tm* timeinfo;
 uint32_t current_time=0;
 uint32_t OTA_time=0;
 
-time_t unix_time=0;
-int tcpconnectID=0;
+time_t unix_time = 0;
+int tcpconnectID = 0; // tcp id =0
 
 
 uint8_t rx_modem_ready;
@@ -117,43 +126,29 @@ uint8_t * p_RxModem;
 bool ota_debug = false; 
 
 
-
-/*--------------------------
-            FUNCTIONS
----------------------------*/
-void OTA_check(void);               // Funcion para verificar que el dispositivo requiere OTA
-
-
-
-/*----------------------
-        CODE BLE        
-----------------------*/
-#define SCAN_DURATION 30            // Duración del escaneo en segundos
-#define TARGET_DEVICE_NAME "sps"    // Nombre del dispositivo BLE 
-
 static bool scanning = false;
 static size_t sen_ble_count = 0;
-sensor_ble sensor_ble_data[MAX_BLE_DEVICES];
+sens_ble_t  sens_ble [MAX_BLE_DEVICES]={0};
+data_sens_t data_sens_ble[MAX_BLE_DEVICES]={0};
+sub_data_t  data_sub_ble={0};
 
-
-static esp_ble_scan_params_t ble_scan_params = {
-    // Inicializa aquí los parámetros de escaneo BLE
-    .scan_type              = BLE_SCAN_TYPE_ACTIVE,
-    .own_addr_type          = BLE_ADDR_TYPE_PUBLIC,
-    .scan_filter_policy     = BLE_SCAN_FILTER_ALLOW_ALL,
-    .scan_interval          = 0x200,
-    .scan_window            = 0x100,
-    .scan_duplicate         = BLE_SCAN_DUPLICATE_ENABLE
-    
-};
+/*****************************************************
+ *      FUNCTIONS   
+*****************************************************/
+void OTA_check(void);               // Funcion para verificar que el dispositivo requiere OTA
 
 //--------------------------------------------//
 void ble_scanner_init(void);
 void ble_scanner_start(void);
 void ble_scanner_stop(void);
-void Format_data(char *mensaje_sensor, sensor_ble* sensor_data);
 static void esp_gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t* param);
+int convert_ble_sens_data(sens_ble_t sensor, data_sens_t *data);
+void convert_data_sens_to_json(data_sens_t* data, char* buffer, size_t sen_ble_count);
+int mqtt_main_data_pub(char* topic, char * data_str, uint8_t len);
 
+int mqtt_main_data_sub(sub_data_t* data_sub);
+int parse_json_to_data(const char* json_string, sub_data_t* data);
+void print_data_sub(const sub_data_t* data);
 
 void ble_scanner_init(void) {
     // Initialize NVS.
@@ -256,33 +251,33 @@ static void esp_gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t* par
                                             ESP_BLE_AD_MANUFACTURER_SPECIFIC_TYPE,
                                             &adv_manufacturer_len);
                    
-                    int index_adr = Inkbird_mac_index(sensor_ble_data,scan_result->scan_rst.bda);
+                    int index_adr = Inkbird_mac_index(sens_ble,scan_result->scan_rst.bda);
 
                     if (index_adr==-1)
                     {
                         //printf("searched device: %s \n\R", TARGET_DEVICE_NAME);
                         ESP_LOGI(TAG,"searched device: %s \n", TARGET_DEVICE_NAME);
-                        strncpy(sensor_ble_data[sen_ble_count].Name, (char *)adv_name, sizeof(sensor_ble_data[sen_ble_count].Name));
-                        sensor_ble_data[sen_ble_count].Name[adv_name_len] = '\0';  // final de la cadena
-                        memcpy(sensor_ble_data[sen_ble_count].addr, scan_result->scan_rst.bda, 6);
-                        memcpy(sensor_ble_data[sen_ble_count].data_Hx, manufacturer_data, adv_manufacturer_len);
+                        strncpy(sens_ble[sen_ble_count].Name, (char *)adv_name, sizeof(sens_ble[sen_ble_count].Name));
+                        sens_ble[sen_ble_count].Name[adv_name_len] = '\0';  // final de la cadena
+                        memcpy(sens_ble[sen_ble_count].addr, scan_result->scan_rst.bda, 6);
+                        memcpy(sens_ble[sen_ble_count].data_Hx, manufacturer_data, adv_manufacturer_len);
                         
                         gettimeofday(&tv, NULL);
 						unix_time = tv.tv_sec;
-                        sensor_ble_data[sen_ble_count].epoch_ts = unix_time;
+                        sens_ble[sen_ble_count].epoch_ts = unix_time;
                         sen_ble_count++;
 
                     } 
                     else if(index_adr!=-1 && adv_manufacturer_len==9){
                         ESP_LOGI(TAG,"searched device: %s \n", TARGET_DEVICE_NAME);
-                        strncpy(sensor_ble_data[index_adr].Name, (char *)adv_name, sizeof(sensor_ble_data[index_adr].Name));
-                        sensor_ble_data[index_adr].Name[adv_name_len] = '\0';  // final de la cadena
-                        memcpy(sensor_ble_data[index_adr].addr, scan_result->scan_rst.bda, 6);
-                        memcpy(sensor_ble_data[index_adr].data_Hx, manufacturer_data, adv_manufacturer_len);
+                        strncpy(sens_ble[index_adr].Name, (char *)adv_name, sizeof(sens_ble[index_adr].Name));
+                        sens_ble[index_adr].Name[adv_name_len] = '\0';  // final de la cadena
+                        memcpy(sens_ble[index_adr].addr, scan_result->scan_rst.bda, 6);
+                        memcpy(sens_ble[index_adr].data_Hx, manufacturer_data, adv_manufacturer_len);
                         
                         gettimeofday(&tv, NULL);
 						unix_time = tv.tv_sec;
-                        sensor_ble_data[index_adr].epoch_ts = unix_time;
+                        sens_ble[index_adr].epoch_ts = unix_time;
                     }
                 }
             }
@@ -358,117 +353,87 @@ static void M95_rx_event_task(void *pvParameters)
 
 // Tarea principal donde leemos y enviamos los datos a la database//
 
-static void _main_task(){
+static void main_task(void *pvParameters){
 
     //char* msg_mqtt   = (char*) malloc(256); 
-    char* mensaje_recv = (char*) malloc(256); 
     int ret = 0;
 
-    // Obtenemos el IMEI
-    strcpy(m95.IMEI,get_M95_IMEI());
     // Seteamos el topico donde se publicara los resultados
-    strcat(m95.topic,m95.IMEI);
-    strcat(m95.topic,"/DATA");
+    sprintf(TopicData,"%s/%s/DATA",MASTER_TOPIC,IMEI);
 
-    int64_t ble_timer = esp_timer_get_time() - 170000000;
-    int64_t OTA_timer = esp_timer_get_time() ;
+    time_t time_modem;
+    time(&time_modem);
+    
+    time_modem = time_modem - INTERVAL_MQTT_SEG;
+
+    time_t OTA_timer = time_modem;
+    time_t ble_timer = time_modem;
+    time_t mqtt_timer = time_modem;
+
     ble_scanner_init();
+    state_mqtt_t state_mqtt = SUB_STATE;
 
-    while (true)
-    {   
-        
-        current_time=pdTICKS_TO_MS(xTaskGetTickCount())/1000;
-
-        if (current_time%30==0){
-            ESP_LOGI("TIME ", "%ld s",current_time);
-            //ESP_LOGE("OTA ", "Version 1.1");
-		}
-
-        if(esp_timer_get_time() - ble_timer > 180000000){
+    while (true){
+        vTaskDelay(pdMS_TO_TICKS(2000)); 
+        time(&time_modem);
+        if(difftime(time_modem,ble_timer)>INTERVAL_BLE_SCAN){
+            ble_timer = time_modem;
             ble_scanner_start();
-			vTaskDelay(1000/portTICK_PERIOD_MS);
+			vTaskDelay(pdMS_TO_TICKS(1000));
             do{
-                vTaskDelay(5000/portTICK_PERIOD_MS);
+                vTaskDelay(pdMS_TO_TICKS(1000));
             }while (scanning);
-            
-            char DataBase[500] = "";
-            for (size_t i = 0; i < sen_ble_count; i++)
-            {
-                if (i==0){
-                    strcat(DataBase, "{\r\n\"sensores\":[\r\n");
-                }
-                Format_data(mensaje_recv, &sensor_ble_data[i]);
-                strcat(DataBase, mensaje_recv);
-                if (i < sen_ble_count - 1) {
-                    strcat(DataBase, ",\r\n");
-                }
-
-                if(i==sen_ble_count - 1){
-                    strcat(DataBase, "\r\n]}\r\n");
-                }
-            }
-            
-            if (sen_ble_count>0)
-            {
-                printf("%s\n", DataBase);
-
-                // Establecer conexion MQTT
-                ret = connect_MQTT_server(tcpconnectID);
-                
-                // Publicamos el valor leido
-                int intentos_mqtt = 0;
-                while (true && ret==1)
-                {
-                    intentos_mqtt ++;
-                    if( M95_PubMqtt_data((uint8_t*)DataBase,m95.topic,strlen(DataBase),0) ){
-                        vTaskDelay(500/portTICK_PERIOD_MS);
-                        ESP_LOGI("BLE", "PUBLICANDO ...");
-                        char* fecha_n = get_m95_date();
-                        if (fecha_n != NULL) {
-                            ESP_LOGI(TAG,"Fecha: %s",fecha_n);
-                        } 
-
-                        break;
-                    }
-                    
-                    // mas de 5 intentos reset
-                    if(intentos_mqtt>5){
-                        vTaskDelay(1000/portTICK_PERIOD_MS);
-                        esp_restart();
-                        break;
-                    }
-                    // volver a intentar conectarse
-                    vTaskDelay( 500 / portTICK_PERIOD_MS );
-                    ret= M95_CheckConnection(tcpconnectID);
-                }
-
-                // Desconectar MQTT
-                disconnect_mqtt();
-
-            }
-            
-            memset(DataBase, 0, sizeof(DataBase));
-
-            ble_timer = esp_timer_get_time();			
-		}
-
-        if (esp_timer_get_time() - OTA_timer> 60000000){
-            current_time=pdTICKS_TO_MS(xTaskGetTickCount())/1000;
-            OTA_timer = esp_timer_get_time();
-            OTA_check();
-			printf("Siguiente ciclo en 60 segundos\r\n");
-			printf("OTA CHECK tomo %ld segundos\r\n",(pdTICKS_TO_MS(xTaskGetTickCount())/1000-current_time));
-			vTaskDelay(1000 / portTICK_PERIOD_MS);
-
+            time(&time_modem); // UPDATE TIME
         }
 
+        if(difftime(time_modem,mqtt_timer)>INTERVAL_MQTT_SEG){
+            mqtt_timer = time_modem;
 
-        vTaskDelay(5000/ portTICK_PERIOD_MS );
+            switch (state_mqtt){
+                case SUB_STATE:
+                    ESP_LOGI(TAG, "---------SUB STATE---------");
+                    state_mqtt = PUB_STATE;
+                    ret = mqtt_main_data_sub(&data_sub_ble);
+                    // SUSCRIBE
+                    break;
+                case PUB_STATE:{
+                    ESP_LOGI(TAG,"----------PUB STATE---------");
+                    state_mqtt = SUB_STATE;
+
+                    if (sen_ble_count>0){
+                        for (size_t i = 0; i < sen_ble_count; i++){
+                            convert_ble_sens_data(sens_ble[i], &data_sens_ble[i]);
+                        }
+
+                        // procesar data de los sensores:
+                        char buffer_data[BUFFER_SIZE_DATA/2] ="";
+                        convert_data_sens_to_json(data_sens_ble, buffer_data, sen_ble_count);
+                        printf("buff: %s\n",buffer_data);
+
+                        ret = mqtt_main_data_pub(TopicData, buffer_data, strlen(buffer_data));
+                        if (ret!=1){
+                            vTaskDelay(pdMS_TO_TICKS(3000));
+                            esp_restart();
+                        }
+                        memset(buffer_data, 0, sizeof(buffer_data));
+                    }
+                    }break;
+                default:
+                    break;
+            }
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            time(&time_modem);		
+		}
+
+        if (difftime(time_modem, OTA_timer)> INTERVAL_OTA_SEG){
+            OTA_timer = time_modem;
+            OTA_check();
+			printf("Siguiente ciclo en %d segundos\r\n", INTERVAL_OTA_SEG);
+			vTaskDelay(pdMS_TO_TICKS(1000));
+        }
+
     }
-    
     //power_off_leds();
-    free(mensaje_recv);
-
     vTaskDelete(NULL);
 }
 
@@ -518,42 +483,141 @@ void OTA_check(void){
 	  }
 
       //vTaskDelay(2000);
-	}
-    while(false);
+	}while(false);
 	//while(!repuesta_ota&(intentos<3));
 }
 
-void Format_data(char *mensaje_sensor, sensor_ble* sensor_data){
-    char buffer_MAC[20];
+int mqtt_main_data_pub(char* topic, char * data_str, uint8_t len){
+    int ret = 0;
+    // Establecer conexion MQTT
+    ret = connect_MQTT_server(tcpconnectID);
+    // Publicamos el valor leido
+    int intentos_mqtt = 0;
+    while (true && ret==1){
+        intentos_mqtt ++;
+        if( M95_PubMqtt_data((uint8_t*)data_str, TopicData, len, tcpconnectID) ){
+            vTaskDelay(500/portTICK_PERIOD_MS);
+            ESP_LOGI("BLE", "PUBLICANDO ...");
+            char* fecha_n = get_m95_date();
+            if (fecha_n != NULL) {
+                ESP_LOGI(TAG,"Fecha: %s",fecha_n);
+            }
+            return 1;
+        }
+        // mas de 5 intentos reset
+        if(intentos_mqtt>3){
+            return 0;
+        }
+        // volver a intentar conectarse
+        vTaskDelay(pdMS_TO_TICKS(500));
+        ret= M95_CheckConnection(tcpconnectID);
+    }
+    disconnect_mqtt();
+    return ret;
+}
 
-    float temperatura =  Inkbird_temperature(sensor_data->data_Hx);
-    float humedad = Inkbird_humidity(sensor_data->data_Hx);
-    float bateria = Inkbird_battery(sensor_data->data_Hx);
-    char *MAC = Inkbird_MAC_to_str(sensor_data, buffer_MAC);
+int mqtt_main_data_sub(sub_data_t* data_sub){
+    int ret=0;
+    char TopicSub[100];
+    char* msg_sub_topic  = (char*) malloc(BUFFER_SIZE_DATA/2);
 
-    char hex_str[3];
-    char data_Hx_str[sizeof(sensor_data->data_Hx)*2 + 1] = "";
-    for (int i = 0; i < sizeof(sensor_data->data_Hx); i++) {
-        sprintf(hex_str, "%02x", sensor_data->data_Hx[i]);
-        strcat(data_Hx_str, hex_str);
+    sprintf(TopicSub,"%s/%s/ALERTA",MASTER_TOPIC,IMEI);
+    ret = connect_MQTT_server(tcpconnectID);
+     if (ret==1) {
+        ret = M95_SubTopic(tcpconnectID, TopicSub, msg_sub_topic);
+        if (ret==1){
+		    ESP_LOGI(TAG, "DATA SUB OK");
+            // printf("%s\n",msg_sub_topic);
+            ret = parse_json_to_data(msg_sub_topic, data_sub);
+            if (ret ==1){
+                print_data_sub(data_sub);
+            }
+            
+        }
+     }
+    free(msg_sub_topic);
+    disconnect_mqtt();
+    return ret;
+}
+
+
+int parse_json_to_data(const char* json_string, sub_data_t* data) {
+    cJSON *json = cJSON_Parse(json_string);
+
+    // Parse user if it exists
+    cJSON *json_user = cJSON_GetObjectItem(json, "user");
+    if (json_user != NULL) {
+        strcpy(data->user.name, cJSON_GetObjectItem(json_user, "name")->valuestring);
+        strcpy(data->user.phone, cJSON_GetObjectItem(json_user, "phone")->valuestring);
     }
 
-    sprintf(mensaje_sensor,
-    "{\r\n"
-    "\"MAC\":\"%s\",\r\n"
-    "\"Temp\":%.2f,\r\n"
-    "\"Hum\":%.2f,\r\n"
-    "\"Bat\":%.2f,\r\n"
-    "\"Fecha\":%lld,\r\n"
-    "\"Hex\":\"%s\"\r\n"
-    "}",
-    MAC,
-    temperatura,
-    humedad,
-    bateria,
-    sensor_data->epoch_ts,
-    data_Hx_str
-    );
+    // Parse sens if it exists
+    cJSON *json_sens_array = cJSON_GetObjectItem(json, "sens");
+    if (json_sens_array != NULL) {
+        data->sens_count = cJSON_GetArraySize(json_sens_array);
+        for (int i = 0; i < data->sens_count; i++) {
+            cJSON *json_sens = cJSON_GetArrayItem(json_sens_array, i);
+            strcpy(data->sens[i].mac, cJSON_GetObjectItem(json_sens, "mac")->valuestring);
+            data->sens[i].id = cJSON_GetObjectItem(json_sens, "id")->valueint;
+            data->sens[i].tem = cJSON_GetObjectItem(json_sens, "tem")->valuedouble;
+        }
+    }
+
+    cJSON_Delete(json);
+
+    // Return 1 if either user or sens was parsed, 0 otherwise
+    return (json_user != NULL || json_sens_array != NULL) ? 1 : 0;
+}
+
+
+void convert_data_sens_to_json(data_sens_t* data, char* buffer, size_t sen_ble_count) {
+    cJSON *sensors = cJSON_CreateArray();
+
+    for (size_t i = 0; i < sen_ble_count; i++) {
+        cJSON *sensor = cJSON_CreateObject();
+        cJSON_AddStringToObject(sensor, "MAC", data[i].mac);
+        cJSON_AddNumberToObject(sensor, "Tem", round(data[i].temperature*1e2)/1e2);
+        cJSON_AddNumberToObject(sensor, "Hum", round(data[i].humidity*1e2)/1e2);
+        cJSON_AddNumberToObject(sensor, "Bat", round(data[i].battery*1e2)/1e2);
+        cJSON_AddNumberToObject(sensor, "Time", (double)data[i].time);
+        cJSON_AddItemToArray(sensors, sensor);
+    }
+
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddItemToObject(root, "Sensors", sensors);
+
+    char *json = cJSON_PrintUnformatted(root);
+    strcpy(buffer, json);
+    cJSON_Delete(root);
+    free(json);
+}
+
+void print_data_sub(const sub_data_t* data) {
+    // Imprimir datos del usuario
+    printf("User:\n");
+    printf("  Name: %s\n", data->user.name);
+    printf("  Phone: %s\n", data->user.phone);
+
+    // Imprimir datos de los sensores solo si se encontraron en el JSON
+    if (data->sens_count > 0) {
+        printf("Sensors:\n");
+        for (int i = 0; i < data->sens_count; i++) {
+            printf("  Sensor %d:\n", i + 1);
+            printf("    MAC: %s\n", data->sens[i].mac);
+            printf("    ID: %d\n", data->sens[i].id);
+            printf("    Temperature: %.2f\n", data->sens[i].tem);
+        }
+    }
+}
+
+
+int convert_ble_sens_data(sens_ble_t sensor, data_sens_t *data){
+    data->battery     = Inkbird_battery(sensor.data_Hx);
+    data->temperature = Inkbird_temperature(sensor.data_Hx);
+    data->humidity    = Inkbird_humidity(sensor.data_Hx);
+    data->time        = sensor.epoch_ts;
+    Inkbird_MAC_to_str(sensor, data->mac);
+    return 0;
 }
 
 void m95_config(){
@@ -616,17 +680,16 @@ void app_main(void)
             vTaskDelay(1000/portTICK_PERIOD_MS);
             esp_restart();
         }
-
         ESP_LOGI("M95","Intento Inicialización N°: %i",intentos_m95);	
         vTaskDelay(2000/portTICK_PERIOD_MS);
     }
     
     // ---------------------------------------------------------------
-    strcpy(m95.IMEI,get_M95_IMEI());
+    strcpy(IMEI,get_M95_IMEI());
     char* fecha_n = get_m95_date();
     time_t fecha_epoch = get_m95_date_epoch();
 
-    ESP_LOGI(TAG,"IMEI: %s", m95.IMEI );
+    ESP_LOGI(TAG,"IMEI: %s", IMEI);
     if (fecha_n != NULL) {
         ESP_LOGI(TAG,"Fecha: %s",fecha_n);
     } 
@@ -646,8 +709,8 @@ void app_main(void)
     ESP_LOGI(TAG,"Iniciando tarea principal");
 
     doc = cJSON_CreateObject();
-    cJSON_AddItemToObject(doc,"imei",cJSON_CreateString(m95.IMEI));
-    cJSON_AddItemToObject(doc,"project",cJSON_CreateString("TH"));
+    cJSON_AddItemToObject(doc,"imei",cJSON_CreateString(IMEI));
+    cJSON_AddItemToObject(doc,"project",cJSON_CreateString(MASTER_TOPIC));
     cJSON_AddItemToObject(doc,"ota",cJSON_CreateString("true"));
     cJSON_AddItemToObject(doc,"cmd",cJSON_CreateString("false"));
     cJSON_AddItemToObject(doc,"sw",cJSON_CreateString("1.1"));
@@ -659,14 +722,5 @@ void app_main(void)
     printf(output);
     printf("\r\n");
 
-    
-    xTaskCreate(_main_task, "_main_task", 6144, NULL, 15, NULL);
-
-    gpio_reset_pin(GPIO_NUM_13);
-    gpio_set_direction(GPIO_NUM_13, GPIO_MODE_OUTPUT);
-    gpio_set_level(GPIO_NUM_13,0);
-    vTaskDelay(5000/portTICK_PERIOD_MS);
-    gpio_set_level(GPIO_NUM_13,1);
-    vTaskDelay(2000/portTICK_PERIOD_MS);
-
+    xTaskCreate(main_task, "main_task", 6*1024, NULL,5, NULL);
 }

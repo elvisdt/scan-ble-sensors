@@ -1,6 +1,6 @@
 
 #include "inkbird_ble.h"
-sensor_ble * disp_ble;
+sens_ble_t * disp_ble;
 
 
 float Inkbird_temperature(const uint8_t * manufacturer_data){
@@ -24,18 +24,18 @@ float Inkbird_battery(const uint8_t * manufacturer_data){
     return battery;
 }
 
-char * Inkbird_MAC_to_str(sensor_ble * data,char * buffer){
+int Inkbird_MAC_to_str(sens_ble_t data,char * buffer){
     char mac_addr[20];
     char hex_number[4];
     memset(mac_addr,0x00,sizeof(mac_addr));
     for (size_t i = 0; i < 6; i++)
     {
-        sprintf(hex_number,"%02x:",data->addr[i]);
+        sprintf(hex_number,"%02x:",data.addr[i]);
         strcat(mac_addr,hex_number);
     }
     mac_addr[strlen(mac_addr) - 1] = 0x00;
     strcpy(buffer,mac_addr);
-    return buffer;
+    return 0;
 }
 
 
@@ -51,7 +51,7 @@ void Inkbird_str_to_MAC(char * str_mac,uint8_t * buffer_mac){
 }
 
 
-int Inkbird_mac_index(sensor_ble datos_guardados[MAX_BLE_DEVICES],esp_bd_addr_t mac_addr){
+int Inkbird_mac_index(sens_ble_t datos_guardados[MAX_BLE_DEVICES],esp_bd_addr_t mac_addr){
     for (int i = 0; i < MAX_BLE_DEVICES; i++)
     {
         if((memcmp(datos_guardados[i].addr,mac_addr,ESP_BD_ADDR_LEN) == 0)&&(Inkbird_check_empty_mac(mac_addr) == false)){
@@ -161,7 +161,7 @@ uint8_t Inkbird_cmd(char * cmd,char * buffer_response){
                     strcpy(disp_ble[i].Name,datos[0]);
                     //sprintf(disp_ble[i].addr,"%s",datos[1]);
                     memcpy(disp_ble[i].addr,mac_addr,ESP_BD_ADDR_LEN);
-                    Inkbird_MAC_to_str(&disp_ble[i],mac_string);
+                    Inkbird_MAC_to_str(disp_ble[i],mac_string);
                     
                     break;
                 }      
@@ -171,8 +171,8 @@ uint8_t Inkbird_cmd(char * cmd,char * buffer_response){
                     
                     sprintf(Respuesta+strlen(Respuesta),"Name: %s Addr: %s Tipo: %s BORRADO; \n", disp_ble[i].Name, datos[1], "cooler"); 
 
-                    memset(disp_ble[i].Name,0x00,sizeof(((sensor_ble *)0)->Name));
-                    memset(disp_ble[i].addr,0x00,sizeof(((sensor_ble *)0)->addr));                    
+                    memset(disp_ble[i].Name,0x00,sizeof(((sens_ble_t *)0)->Name));
+                    memset(disp_ble[i].addr,0x00,sizeof(((sens_ble_t *)0)->addr));                    
                     break;
                 }
             }  
@@ -183,14 +183,14 @@ uint8_t Inkbird_cmd(char * cmd,char * buffer_response){
     return 0;
 }
 
-void Inkbird_register_devices_buffer(sensor_ble  * devices){
+void Inkbird_register_devices_buffer(sens_ble_t  * devices){
     disp_ble = devices;
 }
 
 
 //-----------------------------------------------//
 
-void print_sensor_data(sensor_ble* devices) {
+void print_sensor_data(sens_ble_t* devices) {
     printf("Nombre: %s\n", devices->Name);
 
     printf("Dirección: ");

@@ -62,7 +62,9 @@ void M95_checkpower();
 char* get_m95_date();
 time_t get_m95_date_epoch();
 
-bool M95_PubMqtt_data(uint8_t * data,char * topic,uint16_t data_len,uint8_t tcpconnectID);
+int M95_PubMqtt_data(uint8_t * data,char * topic,uint16_t data_len,uint8_t tcpconnectID);
+int M95_SubTopic(int tcpconnectID, char* topic_name, char* response);
+
 char* get_M95_IMEI();
 // Actualizamos la hora interna del ESP
 void M95_epoch(time_t * epoch);

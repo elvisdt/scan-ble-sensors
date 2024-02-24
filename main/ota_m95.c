@@ -6,7 +6,11 @@
  */
 
 #include "ota_m95.h"
+
 #include "ota_global.h"
+#include "ota_esp32.h"
+#include "ota_control.h"
+#include "ota_headers.h"
 
 static uint8_t Rx_Buffer[ OTA_PACKET_MAX_SIZE ];
 

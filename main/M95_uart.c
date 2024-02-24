@@ -75,7 +75,7 @@ void M95_pwron(){
 
 	while(gpio_get_level(STATUS_Pin) == 0)
 	{
-		if( ( esp_timer_get_time() - actual_time_M95 ) > 5 * S_TO_US) break;
+		if( ( esp_timer_get_time() - actual_time_M95 ) > S_TO_US(5)) break;
 		vTaskDelay(300 / portTICK_PERIOD_MS);
 	}
 
@@ -213,7 +213,7 @@ int get_M95_signal(){
             array de elementos 0xXX; /data_b y de tamaño /size_b
             y guarda esos valores en /result  
  */
-bool M95_PubMqtt_data(uint8_t * data,char * topic,uint16_t data_len,uint8_t tcpconnectID){
+int M95_PubMqtt_data(uint8_t * data,char * topic,uint16_t data_len,uint8_t tcpconnectID){
 	int k = 0;
 	sprintf(buff_send,"AT+QMTPUB=%d,0,0,1,\"%s\",%d\r\n",tcpconnectID,topic,data_len);
 	//printf("Pub_msg=\n%s\n",buff_send);
@@ -225,6 +225,33 @@ bool M95_PubMqtt_data(uint8_t * data,char * topic,uint16_t data_len,uint8_t tcpc
 	k = readAT("+QMT","ERROR\r\n",5000,buff_reciv);
 	if(k != 1) return 0;
 	return 1;
+}
+
+
+int M95_SubTopic(int tcpconnectID, char* topic_name, char* response){
+    sprintf(buff_send,"AT+QMTSUB=%d,1,\"%s\",0\r\n",tcpconnectID,topic_name);
+    int success = 0;    
+    if(sendAT(buff_send,"+QMTRECV:","ERROR\r\n",20000,buff_reciv) == 1){
+        success = 1;
+    }
+
+    if(success == 0){
+        ESP_LOGE("MQTT Subs","No se recibio respuesta del topico:\n%s\n",topic_name);
+        return 0;
+    }
+	
+	char *start;
+	start = strchr(buff_reciv, '{');
+	// Si se encontró la llave
+	if(start != NULL){
+
+		char *data = strdup(start);
+		strcpy(response,data);
+
+		free(data);
+		return 1; // RESPUESTA OK
+	}
+    return -1;
 }
 
 uint8_t M95_begin(){
@@ -270,7 +297,7 @@ uint8_t M95_begin(){
 	vTaskDelay(200 / portTICK_PERIOD_MS);
 
 	// Activate GPRS context
-	sendAT("AT+QIACT\r\n","OK\r\n","ERROR\r\n" , 1000, buff_reciv);
+	sendAT("AT+QIACT\r\n","OK\r\n","ERROR\r\n" , 15000, buff_reciv);
 	vTaskDelay(500/portTICK_PERIOD_MS);
 
 	// Synchronize the Local Time Via NTP
@@ -427,7 +454,7 @@ time_t get_m95_date_epoch() {
     timeinfo.tm_year = year + 100; 	// Los años se cuentan desde 1900
     timeinfo.tm_mon = month - 1; 	// Los meses se cuentan desde 0
     timeinfo.tm_mday = day;		 
-    timeinfo.tm_hour = hour + 5;	// La diferencia de Horas de formato UTC global
+    timeinfo.tm_hour = hour;	// La diferencia de Horas de formato UTC global
     timeinfo.tm_min = minute;
     timeinfo.tm_sec = second;
 
@@ -452,7 +479,7 @@ int sendAT(char *command, char *ok, char *error, uint32_t timeout, char *respons
 	actual_time_M95 = esp_timer_get_time();
 	idle_time_m95 = (uint64_t)(timeout*1000);
 
-	debug = 1;
+	debug = 0;
 
 	// printf("Send AT esperando: %lu ms\n\r",timeout);
 	rx_modem_ready = 0;
@@ -628,38 +655,42 @@ uint8_t TCP_open(){
 	//debug = 0;
 	// Select a Context as Foreground Context : = 0 VIRTUAL_UART_1  := 1 VIRTUAL_UART_2 
     sendAT("AT+QIFGCNT=0\r\n","OK","ERROR",10000,buff_reciv);
-	vTaskDelay(20 / portTICK_PERIOD_MS);
+	vTaskDelay(50 / portTICK_PERIOD_MS);
 
-	// Select CSD or GPRS as the Bearer
-	sendAT("AT+QICSGP=1,\"movistar.pe\"\r\n","OK","ERROR",10000,buff_reciv);
-	vTaskDelay(20 / portTICK_PERIOD_MS);
+
 
     // Control Whether or Not to Enable Multiple TCPIP Session: 0 Simple - 1 Multiple
-    sendAT("AT+QIMUX=0\r\n","OK","ERROR",10000,buff_reciv);
-    vTaskDelay(20 / portTICK_PERIOD_MS);
+    sendAT("AT+QIMUX=1\r\n","OK","ERROR",10000,buff_reciv);
+    vTaskDelay(50 / portTICK_PERIOD_MS);
 
     // Transparente 0 no trasnparente 1 transparente
 	// Select TCPIP Transfer Mode
     sendAT("AT+QIMODE=0\r\n","OK","ERROR",10000,buff_reciv);
-	vTaskDelay(20 / portTICK_PERIOD_MS);
+	vTaskDelay(50 / portTICK_PERIOD_MS);
 
     //IMPORTANTE: LEER ESTE COMANDO
     ///enviar_AT("AT+QITCFG=3,2,512,1\r\n","K\r\n","ERROR\r\n",25500,   buff_reciv);
 
-    // USE ip address as the address to establish TCP/UDP
-	// Connect with IP Address or Domain Name Server
-    sendAT("AT+QIDNSIP=0\r\n","OK","ERROR",25500,buff_reciv);
-    vTaskDelay(2000 / portTICK_PERIOD_MS);
+
+	// Select CSD or GPRS as the Bearer
+	sprintf(buff_send,"AT+QIREGAPP=\"%s\",\"\",\"\"\r\n",SIM_APN);
+	sendAT(buff_send,"OK","ERROR",10000,buff_reciv);
+	vTaskDelay(50 / portTICK_PERIOD_MS);
 
     // register TCP/IP  stack
 	// AT+QIREGAPP Start TCPIP Task and Set APN, User Name and Password
     sendAT("AT+QIREGAPP\r\n","OK","ERROR",25500,buff_reciv);
     vTaskDelay(2000 / portTICK_PERIOD_MS);
+	
+    // USE ip address as the address to establish TCP/UDP
+	// Connect with IP Address or Domain Name Server
+    sendAT("AT+QIDNSIP=0\r\n","OK","ERROR",25500,buff_reciv);
+    vTaskDelay(2000 / portTICK_PERIOD_MS);
 
     // Activate FGCNT
 	// Activate GPRS/CSD Context
-    sendAT("AT+QIACT\r\n","OK","ERROR",25500,buff_reciv);
-    vTaskDelay(2000 / portTICK_PERIOD_MS);
+    // sendAT("AT+QIACT\r\n","OK","ERROR",25500,buff_reciv);
+    // vTaskDelay(2000 / portTICK_PERIOD_MS);
 
     // Get Local IP address
     sendAT("AT+QILOCIP\r\n",".","ERROR",35000,buff_reciv);
@@ -682,7 +713,6 @@ uint8_t TCP_send(char *msg, uint8_t len){
 
 	debug = 0;
 	//debug = 1;
-
     temporal = sendAT("AT+QISEND\r\n",">","ERROR\r\n",25500,buff_reciv);
     if(temporal != 1){ 
         return 0; 
@@ -730,4 +760,32 @@ void reiniciar(){
     vTaskDelay(30000 / portTICK_PERIOD_MS);
     M95_begin();
     vTaskDelay(20000 / portTICK_PERIOD_MS);
+}
+
+
+/*************************************
+ * SMS
+**************************************/
+//--------------- SMS---------------------//
+int M95_send_SMS(char *phone, char *msg, int data_len){
+	int ret =0; 
+	ret = sendAT("AT+CMGF=1\r\n","OK\r\n","ERROR\r\n",5000,buff_reciv);
+	vTaskDelay(pdMS_TO_TICKS(100));
+	ret = sendAT("AT+CSCS=\"GSM\"\r\n","OK\r\n","ERROR\r\n",5000,buff_reciv);
+	vTaskDelay(pdMS_TO_TICKS(100));
+
+	// sprintf(buff_send,"AT+CMGS=\"%s\"\r\n",phone);
+	sprintf(buff_send,"AT+CMGS=%s\r\n",phone);
+	//printf("Pub_msg=\n%s\n",buff_send);
+	ret = sendAT(buff_send,">","ERROR",10000,buff_reciv);
+	vTaskDelay(pdMS_TO_TICKS(500));
+
+	// sendAT("hola\r\n","+CMGS","ERROR",1000,buff_reciv);
+	uart_write_bytes(UART_MODEM,(uint8_t *)msg, data_len);
+	vTaskDelay(pdMS_TO_TICKS(50));
+	char ctrl_z = '\x1A';
+	uart_write_bytes(UART_MODEM,&ctrl_z, 1);
+
+	ret = readAT("+CMGS","ERROR",1000,buff_reciv);
+	return ret;
 }

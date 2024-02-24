@@ -11,6 +11,7 @@
         "ota_global.h": "c",
         "ota_m95.h": "c",
         "ota_control.h": "c",
-        "cjson.h": "c"
+        "cjson.h": "c",
+        "gpio.h": "c"
     }
 }
