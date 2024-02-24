@@ -11,8 +11,8 @@ esp_ota_handle_t otaHandlerXXX = 0;
 
 
 // M95 buffer para guardar datos recibidos por el M95
-//char 		M95_buffer[255];
-char 		M95_buffer[500];
+//char 		buff_reciv[255];
+char 		buff_reciv[500];
 //char* 		uart_m95_string;
 // Bandera para sincronizar hora
 uint8_t  	epoch_ready;
@@ -26,7 +26,7 @@ uint64_t 	idle_time_m95;
 char buffer[BUFFER_SIZE];
 
 // String para los comandos que se enviaran al M95
-char commando_M95[100];
+char buff_send[100];
 
 int M95_check_uart(char* ok_msg, int time){
 	// Enviamos el commando AT
@@ -46,7 +46,7 @@ int M95_check_uart(char* ok_msg, int time){
 
 	while(a > 0){
 
-		if( ( readAT(ok_msg,"ERROR",time*1000,M95_buffer) == 1 ) ){
+		if( ( readAT(ok_msg,"ERROR",time*1000,buff_reciv) == 1 ) ){
 			printf("Already active M95\n\r");
 			break;
 		}
@@ -138,8 +138,8 @@ void M95_checkpower(){
 			correspondiente
  */
 int M95_poweroff_command(){
-	if(sendAT("AT+QPOWD=0\r\n","OK\r\n","FAILED\r\n",2000,M95_buffer) != 1){
-		return sendAT("AT+QPOWD=1\r\n","OK\r\n","FAILED\r\n",2000,M95_buffer);
+	if(sendAT("AT+QPOWD=0\r\n","OK\r\n","FAILED\r\n",2000,buff_reciv) != 1){
+		return sendAT("AT+QPOWD=1\r\n","OK\r\n","FAILED\r\n",2000,buff_reciv);
 	}
 	return 1;
 }
@@ -148,15 +148,15 @@ int M95_poweroff_command(){
     @brief  Obtenemos el IMEI del M95 mediante comando AT
  */
 char* get_M95_IMEI(){
-	// M95_buffer -> Variable donde se almacena la respuesta del M95
+	// buff_reciv -> Variable donde se almacena la respuesta del M95
 	int intentos = 4;
 	while(intentos > 0){
 		printf("Obteniendo IMEI ... \n");
-		if(sendAT("\r\nAT+QGSN\r\n","+QGSN","ERROR",2000,M95_buffer) == 1){
-			//printf("1- RESPUESTA =%s\n",(char*)M95_buffer);
+		if(sendAT("\r\nAT+QGSN\r\n","+QGSN","ERROR",2000,buff_reciv) == 1){
+			//printf("1- RESPUESTA =%s\n",(char*)buff_reciv);
 			break;
 		}
-		//printf("2- RESPUESTA =%s\n",(char*)M95_buffer);
+		//printf("2- RESPUESTA =%s\n",(char*)buff_reciv);
 		vTaskDelay(1000 / portTICK_PERIOD_MS);
 		intentos--;
 	}
@@ -165,9 +165,9 @@ char* get_M95_IMEI(){
 		return "NULL";
 	}
 
-	//printf("3- RESPUESTA =%s\n",(char*)M95_buffer);
+	//printf("3- RESPUESTA =%s\n",(char*)buff_reciv);
 	char lim[3] = "\"";		// lim = "
-	char * p_clock = strtok(M95_buffer,lim);
+	char * p_clock = strtok(buff_reciv,lim);
 	while(p_clock != NULL){
 		if(strstr(p_clock,"+")==NULL && strstr(p_clock,":") == NULL){
 			break;
@@ -181,10 +181,10 @@ char* get_M95_IMEI(){
     @brief  Obtenemos la calidad de señal del M95 mediante comando AT
  */
 int get_M95_signal(){
-	// M95_buffer -> Variable donde se almacena la respuesta del M95
+	// buff_reciv -> Variable donde se almacena la respuesta del M95
 	int intentos = 4;
 	while(intentos > 0){
-		if(sendAT("\r\nAT+CSQ\r\n","+CSQ","ERROR",500,M95_buffer) == 1){
+		if(sendAT("\r\nAT+CSQ\r\n","+CSQ","ERROR",500,buff_reciv) == 1){
 			break;
 		}
 		intentos--;
@@ -194,9 +194,9 @@ int get_M95_signal(){
 		return 99;
 	}
 
-	//printf("RESPUESTA =%s\n",(char*)M95_buffer);
+	//printf("RESPUESTA =%s\n",(char*)buff_reciv);
 	char lim[3] = ":, ";		// lim = "
-	char * p_clock = strtok(M95_buffer,lim);
+	char * p_clock = strtok(buff_reciv,lim);
 	while(p_clock != NULL){
 		if(strstr(p_clock,"CSQ")!=NULL){
 			break;
@@ -215,14 +215,14 @@ int get_M95_signal(){
  */
 bool M95_PubMqtt_data(uint8_t * data,char * topic,uint16_t data_len,uint8_t tcpconnectID){
 	int k = 0;
-	sprintf(commando_M95,"AT+QMTPUB=%u,0,0,0,\"%s\",%u\r\n",tcpconnectID,topic,data_len);
-	//printf("Pub_msg=\n%s\n",commando_M95);
+	sprintf(buff_send,"AT+QMTPUB=%d,0,0,1,\"%s\",%d\r\n",tcpconnectID,topic,data_len);
+	//printf("Pub_msg=\n%s\n",buff_send);
 	
-	sendAT(commando_M95,">","ERROR",1000,M95_buffer);
+	sendAT(buff_send,">","ERROR",1000,buff_reciv);
 	vTaskDelay(10);
 
 	uart_write_bytes(UART_MODEM,data,data_len);
-	k = readAT("+QMT","ERROR\r\n",5000,M95_buffer);
+	k = readAT("+QMT","ERROR\r\n",5000,buff_reciv);
 	if(k != 1) return 0;
 	return 1;
 }
@@ -232,51 +232,51 @@ uint8_t M95_begin(){
 	debug = 0;
 
 	// Disable local echo mode			
-	sendAT("ATE0\r\n","OK\r\n","ERROR\r\n",5000,M95_buffer);		
+	sendAT("ATE0\r\n","OK\r\n","ERROR\r\n",5000,buff_reciv);		
 	deactivate_pin(BLUE_LED);
 	vTaskDelay(500 / portTICK_PERIOD_MS);
 
 	// Disable "result code" prefix
-	sendAT("AT+CMEE=0\r\n","OK\r\n","ERROR\r\n",5000,M95_buffer);	
+	sendAT("AT+CMEE=0\r\n","OK\r\n","ERROR\r\n",5000,buff_reciv);	
 	activate_pin(BLUE_LED);
 	vTaskDelay(500 / portTICK_PERIOD_MS);
 
 	// Indicate if a password is required
-	sendAT("AT+CPIN?\r\n","OK\r\n","ERROR\r\n", 2000,M95_buffer);
+	sendAT("AT+CPIN?\r\n","OK\r\n","ERROR\r\n", 2000,buff_reciv);
+	vTaskDelay(500 / portTICK_PERIOD_MS);
+
+	sendAT("ATI\r\n","OK","ERROR\r\n", 500,buff_reciv);
 	vTaskDelay(500 / portTICK_PERIOD_MS);
 
 	// Set SMS message format as text mode	
-	sendAT("AT+CMGF=1\r\n","OK\r\n","ERROR\r\n", 300,M95_buffer);
+	sendAT("AT+CMGF=1\r\n","OK\r\n","ERROR\r\n", 300,buff_reciv);
 	vTaskDelay(500 / portTICK_PERIOD_MS);
 
-	// TCPIP Transfer mode (=0 -> Use "AT+QISEND" command)	 
-	sendAT("AT+QIMODE=0\r\n","OK\r\n","ERROR\r\n", 300,M95_buffer);
-	vTaskDelay(500 / portTICK_PERIOD_MS);
 
 	// Signal Quality - .+CSQ: 6,0  muy bajo
-	sendAT("AT+CSQ\r\n","CSQ","ERROR\r\n", 300,M95_buffer);
+	sendAT("AT+CSQ\r\n","CSQ","ERROR\r\n", 300,buff_reciv);
 	vTaskDelay(200 / portTICK_PERIOD_MS);
 
 	// Network Registration Status	
-	bandera=sendAT("AT+CGREG?\r\n","0,","ERROR\r\n", 300, M95_buffer);
+	bandera=sendAT("AT+CGREG?\r\n","0,","ERROR\r\n", 300, buff_reciv);
 	vTaskDelay(200 / portTICK_PERIOD_MS);
 
 	// Request IMEI (Internatinal Mobile Identify)
-	sendAT("AT+GSN\r\n","OK\r\n","ERROR\r\n", 300, M95_buffer);
+	sendAT("AT+GSN\r\n","OK\r\n","ERROR\r\n", 300, buff_reciv);
 	vTaskDelay(200 / portTICK_PERIOD_MS);
 
 	//Delete all SMS
-	sendAT("AT+QMGDA=\"DEL ALL\"\r\n","OK\r\n","ERROR\r\n", 10000, M95_buffer);
+	sendAT("AT+QMGDA=\"DEL ALL\"\r\n","OK\r\n","ERROR\r\n", 10000, buff_reciv);
 	vTaskDelay(200 / portTICK_PERIOD_MS);
 
 	// Activate GPRS context
-	sendAT("AT+QIACT\r\n","OK\r\n","ERROR\r\n" , 1000, M95_buffer);
+	sendAT("AT+QIACT\r\n","OK\r\n","ERROR\r\n" , 1000, buff_reciv);
 	vTaskDelay(500/portTICK_PERIOD_MS);
 
 	// Synchronize the Local Time Via NTP
 	printf("Actualizando la hora\n\r");
 	bandera = sendAT("AT+QNTP=\"pool.ntp.org\"\r\n"
-					,"+QNTP: 0","3",12000,M95_buffer);
+					,"+QNTP: 0","3",12000,buff_reciv);
 	if((bandera == 0)){
 		printf("No se pudo actualizar la hora\n\r");
 		vTaskDelay(100/portTICK_PERIOD_MS);
@@ -293,28 +293,32 @@ uint8_t M95_begin(){
 int connect_MQTT_server(int id){
 
 	char respuesta_esperada[30];
-	sprintf(commando_M95,"AT+QMTOPEN=%d,\"%s\",%s\r\n",id,ip_MQTT,port_MQTT);
+	//sprintf(buff_send,"AT+QMTCFG=\"TIMEOUT\",%d,10,3,0\r\n",id);
+	//sprintf(buff_send,"AT+QMTCFG=\"recv/mode\",%d\r\n",id);
+	//sendAT(buff_send,"OK","ERROR\r\n",500,buff_reciv);
+	vTaskDelay(1000 / portTICK_PERIOD_MS);
+	
+	sprintf(buff_send,"AT+QMTOPEN=%d,\"%s\",%s\r\n",id,ip_MQTT,port_MQTT);
 	sprintf(respuesta_esperada,"+QMTOPEN: %d,0",id);
-	//printf("\n- Connect = %s\n",commando_M95);
+	//printf("\n- Connect = %s\n",buff_send);
 	
 	printf("MQTT: Abriendo conexion...\r\n");
 
-	if(sendAT(commando_M95,respuesta_esperada,"ERROR",10000,M95_buffer) != 1){
+	if(sendAT(buff_send,respuesta_esperada,"ERROR",70000,buff_reciv) != 1){
 		ESP_LOGE("QMTOPEN","Bad Syntaxis");
 		return 0;
 	}
-	if(strstr((char*)M95_buffer,"-1"))
-	{
+	if(strstr((char*)buff_reciv,"-1")){
 		ESP_LOGE("M95 E","Cant open IP");
 		return 0;
 	}
 	vTaskDelay(1000 / portTICK_PERIOD_MS);
 
     // Connect with name "M95" to Broker
-	sprintf(commando_M95,"AT+QMTCONN=%d,\"%s\"\r\n",id,CLIENT_ID_MQTT);
+	sprintf(buff_send,"AT+QMTCONN=%d,\"%s\"\r\n",id,CLIENT_ID_MQTT);
 	sprintf(respuesta_esperada,"+QMTCONN: %d,0",id);
 
-	int a = sendAT(commando_M95,respuesta_esperada,"ERROR\r\n",5000,M95_buffer);
+	int a = sendAT(buff_send,respuesta_esperada,"ERROR\r\n",5000,buff_reciv);
 	vTaskDelay(1000 / portTICK_PERIOD_MS);
 	return a;
 }
@@ -324,9 +328,9 @@ int M95_CheckConnection(int id){
 }
 
 int m95_sub_topic_json(int ID, char* topic_name, char* response){
-	sprintf(commando_M95,"AT+QMTSUB=%d,2,\"%s\",0\r\n",ID,topic_name);
+	sprintf(buff_send,"AT+QMTSUB=%d,2,\"%s\",0\r\n",ID,topic_name);
 	int success = 0;	
-	if(sendAT(commando_M95,"+QMTRECV:","ERROR\r\n",10000,M95_buffer) == 1){
+	if(sendAT(buff_send,"+QMTRECV:","ERROR\r\n",10000,buff_reciv) == 1){
 		success = 1;
 	}
 
@@ -337,7 +341,7 @@ int m95_sub_topic_json(int ID, char* topic_name, char* response){
 	}
 	
 	char lim[3] = "{}";
-	char * p_clock = strtok((char*)M95_buffer,topic_name);
+	char * p_clock = strtok((char*)buff_reciv,topic_name);
 	//printf("Iteracion = |%s|\n",p_clock);
 	
 	while(p_clock != NULL){
@@ -353,9 +357,9 @@ int m95_sub_topic_json(int ID, char* topic_name, char* response){
 
 int m95_sub_topic_OTA(int ID, char* topic_OTA, char* response){
 
-	sprintf(commando_M95,"AT+QMTSUB=%d,2,\"%s\",0\r\n",ID,topic_OTA);
+	sprintf(buff_send,"AT+QMTSUB=%d,2,\"%s\",0\r\n",ID,topic_OTA);
 	int success = 0;	
-	if(sendAT(commando_M95,"+QMTRECV:","ERROR\r\n",10000,M95_buffer) == 1){
+	if(sendAT(buff_send,"+QMTRECV:","ERROR\r\n",10000,buff_reciv) == 1){
 		success = 1;
 	}
 	if(success == 0){
@@ -365,7 +369,7 @@ int m95_sub_topic_OTA(int ID, char* topic_OTA, char* response){
 	}
 
 	char lim[2] = ",";
-	char * p_clock = strtok((char*)M95_buffer,lim);
+	char * p_clock = strtok((char*)buff_reciv,lim);
 	//printf("Iteracion = |%s|\n",p_clock);
 	
 	while(p_clock != NULL){
@@ -383,19 +387,19 @@ int m95_sub_topic_OTA(int ID, char* topic_OTA, char* response){
 
 
 void m95_unsub_topic(int ID, char* topic_name){
-	sprintf(commando_M95,"AT+QMTUNS=%d,3,\"%s\"",ID,topic_name);
-	sendAT(commando_M95,"+QMTUNS:","ERROR\r\n",7000,M95_buffer);
+	sprintf(buff_send,"AT+QMTUNS=%d,3,\"%s\"",ID,topic_name);
+	sendAT(buff_send,"+QMTUNS:","ERROR\r\n",7000,buff_reciv);
 }
 
 char* get_m95_date(){
-	int a = sendAT("AT+CCLK?\r\n","+CCLK: ","ERROR",1000,M95_buffer);
+	int a = sendAT("AT+CCLK?\r\n","+CCLK: ","ERROR",1000,buff_reciv);
 	if( a != 1){
 		printf("hora no conseguida\n\r");	
 		return NULL;		
 	}
 
 	char lim[3] = "\"";
-	char * p_clock = strtok(M95_buffer,lim);
+	char * p_clock = strtok(buff_reciv,lim);
 	while(p_clock != NULL){
 		if(strstr(p_clock,"/")!= NULL){
 			break;
@@ -448,7 +452,7 @@ int sendAT(char *command, char *ok, char *error, uint32_t timeout, char *respons
 	actual_time_M95 = esp_timer_get_time();
 	idle_time_m95 = (uint64_t)(timeout*1000);
 
-	//debug = 1;
+	debug = 1;
 
 	// printf("Send AT esperando: %lu ms\n\r",timeout);
 	rx_modem_ready = 0;
@@ -537,9 +541,9 @@ int readAT(char *ok, char *error, uint32_t timeout, char *response)
 }
 
 void disconnect_mqtt(){
-	//sendAT("AT+QMTDISC=1\r\n","OK\r\n", "ERROR\r\n", 1000, M95_buffer);
+	//sendAT("AT+QMTDISC=1\r\n","OK\r\n", "ERROR\r\n", 1000, buff_reciv);
 	//vTaskDelay(1000 / portTICK_PERIOD_MS);
-	sendAT("AT+QMTCLOSE=0\r\n","OK\r\n","ERROR\r\n", 1000,M95_buffer);
+	sendAT("AT+QMTCLOSE=0\r\n","OK\r\n","ERROR\r\n", 1000,buff_reciv);
 	vTaskDelay(1000/portTICK_PERIOD_MS);
 }
 
@@ -623,88 +627,81 @@ uint8_t TCP_open(){
     uint8_t temporal=0;
 	//debug = 0;
 	// Select a Context as Foreground Context : = 0 VIRTUAL_UART_1  := 1 VIRTUAL_UART_2 
-    sendAT("AT+QIFGCNT=0\r\n","OK","ERROR",10000,M95_buffer);
+    sendAT("AT+QIFGCNT=0\r\n","OK","ERROR",10000,buff_reciv);
 	vTaskDelay(20 / portTICK_PERIOD_MS);
 
 	// Select CSD or GPRS as the Bearer
-	sendAT("AT+QICSGP=1,\"sm.entel.pe\"\r\n","OK","ERROR",10000,M95_buffer);
+	sendAT("AT+QICSGP=1,\"movistar.pe\"\r\n","OK","ERROR",10000,buff_reciv);
 	vTaskDelay(20 / portTICK_PERIOD_MS);
 
     // Control Whether or Not to Enable Multiple TCPIP Session: 0 Simple - 1 Multiple
-    sendAT("AT+QIMUX=0\r\n","OK","ERROR",10000,M95_buffer);
+    sendAT("AT+QIMUX=0\r\n","OK","ERROR",10000,buff_reciv);
     vTaskDelay(20 / portTICK_PERIOD_MS);
 
     // Transparente 0 no trasnparente 1 transparente
 	// Select TCPIP Transfer Mode
-    sendAT("AT+QIMODE=0\r\n","OK","ERROR",10000,M95_buffer);
+    sendAT("AT+QIMODE=0\r\n","OK","ERROR",10000,buff_reciv);
 	vTaskDelay(20 / portTICK_PERIOD_MS);
 
     //IMPORTANTE: LEER ESTE COMANDO
-    ///enviar_AT("AT+QITCFG=3,2,512,1\r\n","K\r\n","ERROR\r\n",25500,   M95_buffer);
+    ///enviar_AT("AT+QITCFG=3,2,512,1\r\n","K\r\n","ERROR\r\n",25500,   buff_reciv);
 
     // USE ip address as the address to establish TCP/UDP
 	// Connect with IP Address or Domain Name Server
-    sendAT("AT+QIDNSIP=0\r\n","OK","ERROR",25500,M95_buffer);
+    sendAT("AT+QIDNSIP=0\r\n","OK","ERROR",25500,buff_reciv);
     vTaskDelay(2000 / portTICK_PERIOD_MS);
 
     // register TCP/IP  stack
 	// AT+QIREGAPP Start TCPIP Task and Set APN, User Name and Password
-    sendAT("AT+QIREGAPP\r\n","OK","ERROR",25500,M95_buffer);
+    sendAT("AT+QIREGAPP\r\n","OK","ERROR",25500,buff_reciv);
     vTaskDelay(2000 / portTICK_PERIOD_MS);
 
     // Activate FGCNT
 	// Activate GPRS/CSD Context
-    sendAT("AT+QIACT\r\n","OK","ERROR",25500,M95_buffer);
+    sendAT("AT+QIACT\r\n","OK","ERROR",25500,buff_reciv);
     vTaskDelay(2000 / portTICK_PERIOD_MS);
 
     // Get Local IP address
-    sendAT("AT+QILOCIP\r\n",".","ERROR",35000,M95_buffer);
+    sendAT("AT+QILOCIP\r\n",".","ERROR",35000,buff_reciv);
     vTaskDelay(2000 / portTICK_PERIOD_MS);
 
-    sprintf(commando_M95,"AT+QIOPEN=\"TCP\",\"%s\",\"%s",ip_OTA,port_OTA);
-	printf("OTA IP =\n%s\n",commando_M95);
-    uart_write_bytes(UART_MODEM,commando_M95,strlen(commando_M95));
+    sprintf(buff_send,"AT+QIOPEN=\"TCP\",\"%s\",%s",ip_OTA,port_OTA);
+	printf("OTA IP =\n%s\n",buff_send);
+    uart_write_bytes(UART_MODEM,buff_send,strlen(buff_send));
 
-    sendAT("\"\r\n","OK","ERROR",5000,M95_buffer);
-    temporal = readAT("CONNECT OK","ERROR",10000,M95_buffer);
+    sendAT("\"\r\n","OK","ERROR",5000,buff_reciv);
+    temporal = readAT("CONNECT OK","ERROR",10000,buff_reciv);
 	vTaskDelay(5000 / portTICK_PERIOD_MS);
     return temporal; //1 == ok 1 != error
 }
 
 uint8_t TCP_send(char *msg, uint8_t len){
-    //sendAT(m95,"ATE1\r\n","OK\r\n","ERROR\r\n",5000,  m95->M95_buffer);//DES Activa modo ECO.
+    //sendAT(m95,"ATE1\r\n","OK\r\n","ERROR\r\n",5000,  m95->buff_reciv);//DES Activa modo ECO.
 
     uint8_t temporal = 0;
 
 	debug = 0;
 	//debug = 1;
 
-    temporal = sendAT("AT+QISEND\r\n",">","ERROR\r\n",25500,M95_buffer);
+    temporal = sendAT("AT+QISEND\r\n",">","ERROR\r\n",25500,buff_reciv);
     if(temporal != 1){ 
         return 0; 
     }
 	uart_write_bytes(UART_MODEM,(void *)msg,len);
 
-    temporal = sendAT("\x1A","SEND OK\r\n","ERROR\r\n",25500,M95_buffer);
+    temporal = sendAT("\x1A","SEND OK\r\n","ERROR\r\n",25500,buff_reciv);
 	if(temporal != 1){
         return 0;
     }
     //printf("SEND OK CORRECTO\r\n");
-	memset(M95_buffer, 0 , 50);
+	memset(buff_reciv, 0 , 50);
     return 1;
 }
 
 void TCP_close(){
 	vTaskDelay(200 / portTICK_PERIOD_MS);          
-    sendAT("AT+QICLOSE\r\n","OK\r\n","ERROR\r\n",5000,M95_buffer);
-    sendAT("AT+QIDEACT\r\n","OK\r\n","ERROR\r\n",5000,M95_buffer);
-	/*
-    if(!sendAT("AT\r\n","OK\r\n","ERROR\r\n",5000,M95_buffer)){
-        if(!sendAT("AT\r\n","OK\r\n","ERROR\r\n",5000,M95_buffer)){
-            reiniciar();
-        }
-    }
-	*/
+    sendAT("AT+QICLOSE\r\n","OK\r\n","ERROR\r\n",5000,buff_reciv);
+    sendAT("AT+QIDEACT\r\n","OK\r\n","ERROR\r\n",5000,buff_reciv);
 }
 
 void reiniciar(){
@@ -715,7 +712,7 @@ void reiniciar(){
     const char * TAG = "Reinciar";
     do{
         vTaskDelay(5000 / portTICK_PERIOD_MS);
-        if(sendAT("AT\r\n","OK\r\n","ERROR\r\n",5000,M95_buffer)){
+        if(sendAT("AT\r\n","OK\r\n","ERROR\r\n",5000,buff_reciv)){
             fin=1;
             ESP_LOGI(TAG,"M95 respondio, encendido");
             //DBGSerial->println("M95 respondio, encendido");

@@ -11,9 +11,10 @@
 
 #include <stdbool.h>
 #include <stdio.h>
+#include "M95_uart.h"
+
 #include "ota_headers.h"
 #include "ota_control.h"
-#include "M95_uart.h"
 
 
 /*

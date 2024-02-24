@@ -25,45 +25,38 @@
 #include "driver/uart.h"
 #include "driver/gpio.h"
 #include <sys/time.h>
-#include <time.h>
 
 
 #include "inkbird_ble.h"
 #include "esp32_general.h"
 #include "M95_uart.h"
+#include "ota_m95.h"
+
 #include "crc.h"
 #include "ota_control.h"
 #include "ota_headers.h"
 #include "ota_esp32.h"
-#include "ota_m95.h"
+#include "ota_global.h"
+
 #include <cjson.h>
-
-
 #include "sdkconfig.h"
 
 /*--------------------------
         DEFINITIONS          
 ---------------------------*/
 
-#define GATTC_TAG             "GATTC_DEMO"
-#define REMOTE_SERVICE_UUID   0xFFF0 //ESP_GATT_UUID_HEART_RATE_SVC
-#define REMOTE_NOTIFY_UUID    0xFFF2 //
-
-#define PROFILE_NUM 1
-#define PROFILE_A_APP_ID 0
-#define INVALID_HANDLE   0
-
-
+// BLE ID
+#define PROFILE_A_APP_ID        0
 
 // Read packet timeout
-#define MODEM_TASK_STACK_SIZE           (2048)
 #define TAG                             "BLE"        // Nombre del TAG
 
+#define MODEM_TASK_STACK_SIZE           (2048)
 #define BUF_SIZE_MODEM                  (1024)
 #define RD_BUF_SIZE                     (BUF_SIZE_MODEM)
 
 
-#define MASTER_TOPIC "TH/" 
+#define MASTER_TOPIC "IVAN_BLE/" 
 
 // RTC_DATA_ATTR int gpio_alarm;
 RTC_DATA_ATTR int status_led = 0;
@@ -76,13 +69,11 @@ RTC_DATA_ATTR int status_modem = 0;
 struct datos_modem{
     char    IMEI[25];
     char    topic[50];
-    char    ota[50];
 };
 
 struct datos_modem m95 = {
                     .IMEI = "0",
                     .topic = MASTER_TOPIC,
-                    .ota = MASTER_TOPIC,
                 };
 
 
@@ -371,16 +362,13 @@ static void _main_task(){
 
     //char* msg_mqtt   = (char*) malloc(256); 
     char* mensaje_recv = (char*) malloc(256); 
-    
+    int ret = 0;
 
     // Obtenemos el IMEI
     strcpy(m95.IMEI,get_M95_IMEI());
     // Seteamos el topico donde se publicara los resultados
     strcat(m95.topic,m95.IMEI);
-    strcat(m95.topic,"/data");
-    
-    strcat(m95.ota,m95.IMEI);
-    strcat(m95.ota,"/OTA");
+    strcat(m95.topic,"/DATA");
 
     int64_t ble_timer = esp_timer_get_time() - 170000000;
     int64_t OTA_timer = esp_timer_get_time() ;
@@ -425,11 +413,11 @@ static void _main_task(){
                 printf("%s\n", DataBase);
 
                 // Establecer conexion MQTT
-                connect_MQTT_server(tcpconnectID);
+                ret = connect_MQTT_server(tcpconnectID);
                 
                 // Publicamos el valor leido
                 int intentos_mqtt = 0;
-                while (true)
+                while (true && ret==1)
                 {
                     intentos_mqtt ++;
                     if( M95_PubMqtt_data((uint8_t*)DataBase,m95.topic,strlen(DataBase),0) ){
@@ -451,7 +439,7 @@ static void _main_task(){
                     }
                     // volver a intentar conectarse
                     vTaskDelay( 500 / portTICK_PERIOD_MS );
-                    M95_CheckConnection(tcpconnectID);
+                    ret= M95_CheckConnection(tcpconnectID);
                 }
 
                 // Desconectar MQTT
@@ -608,14 +596,14 @@ void app_main(void)
     end_task_uart_m95 = 0;
 
     // ---------------------------------------------------------------
-    ESP_LOGI("\nInit","Begin Configuration:\nPins Mode Input, Output\n");
+    ESP_LOGI("Init","Begin Configuration:\nPins Mode Input, Output\n");
     config_pin_esp32();
     m95_config();
 
-    // ---------------------------------------------------------------
+    //---------------------------------------------------------------
     xTaskCreate(M95_rx_event_task, "M95_rx_event_task", 4096, NULL, 12, NULL);
     M95_checkpower();
-    
+
     ESP_LOGI("M95","Iniciando modulo ...");
     int intentos_m95=0;   
     while (1){
@@ -670,6 +658,15 @@ void app_main(void)
     printf("Mensaje OTA:\r\n");
     printf(output);
     printf("\r\n");
+
     
     xTaskCreate(_main_task, "_main_task", 6144, NULL, 15, NULL);
+
+    gpio_reset_pin(GPIO_NUM_13);
+    gpio_set_direction(GPIO_NUM_13, GPIO_MODE_OUTPUT);
+    gpio_set_level(GPIO_NUM_13,0);
+    vTaskDelay(5000/portTICK_PERIOD_MS);
+    gpio_set_level(GPIO_NUM_13,1);
+    vTaskDelay(2000/portTICK_PERIOD_MS);
+
 }

@@ -14,6 +14,6 @@
 #define ip_MQTT     "3.129.163.139"
 #define port_MQTT   "1883"
 
-
+#define SIM_APN    "movistar.pe"
 
 #endif
