@@ -130,7 +130,7 @@ static bool scanning = false;
 static size_t sen_ble_count = 0;
 sens_ble_t  sens_ble [MAX_BLE_DEVICES]={0};
 data_sens_t data_sens_ble[MAX_BLE_DEVICES]={0};
-sub_data_t  data_sub_ble={0};
+static sub_data_t  last_data_sub_ble={0};
 
 /*****************************************************
  *      FUNCTIONS   
@@ -351,6 +351,34 @@ static void M95_rx_event_task(void *pvParameters)
 }
 
 
+
+
+void update_scaner_sensors(){
+    ble_scanner_start();
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    do{
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }while (scanning);
+
+    //--------------------//
+    if (sen_ble_count>0){
+        for (size_t i = 0; i < sen_ble_count; i++){
+            convert_ble_sens_data(sens_ble[i], &data_sens_ble[i]);
+        }
+    }
+}
+
+int set_id_alert(data_sens_t* sens_ble, sub_data_t data){
+    for (size_t i = 0; i < data.sens_count; i++){
+        if (strcmp(sens_ble->mac, data.sens[i].mac) == 0){
+            sens_ble->id= data.sens[i].id;
+            sens_ble->temp_alert = data.sens[i].tem;
+            return 1;
+        }
+    }
+    return 0;
+}
+
 // Tarea principal donde leemos y enviamos los datos a la database//
 
 static void main_task(void *pvParameters){
@@ -376,15 +404,10 @@ static void main_task(void *pvParameters){
     while (true){
         vTaskDelay(pdMS_TO_TICKS(2000)); 
         time(&time_modem);
-        if(difftime(time_modem,ble_timer)>INTERVAL_BLE_SCAN){
-            ble_timer = time_modem;
-            ble_scanner_start();
-			vTaskDelay(pdMS_TO_TICKS(1000));
-            do{
-                vTaskDelay(pdMS_TO_TICKS(1000));
-            }while (scanning);
-            time(&time_modem); // UPDATE TIME
+        if (difftime(time_modem,ble_timer)>INTERVAL_BLE_SCAN){
+            update_scaner_sensors();
         }
+        
 
         if(difftime(time_modem,mqtt_timer)>INTERVAL_MQTT_SEG){
             mqtt_timer = time_modem;
@@ -393,18 +416,27 @@ static void main_task(void *pvParameters){
                 case SUB_STATE:
                     ESP_LOGI(TAG, "---------SUB STATE---------");
                     state_mqtt = PUB_STATE;
-                    ret = mqtt_main_data_sub(&data_sub_ble);
+                    // data_sens_ble;
+                    sub_data_t data_sub={0};
+                    ret = mqtt_main_data_sub(&data_sub);
+                    if (ret==1){
+                        last_data_sub_ble = data_sub;
+                    }
                     // SUSCRIBE
                     break;
                 case PUB_STATE:{
                     ESP_LOGI(TAG,"----------PUB STATE---------");
-                    state_mqtt = SUB_STATE;
 
-                    if (sen_ble_count>0){
+                    // Imprimir datos de los sensores solo si se encontraron en el JSON
+                    if (last_data_sub_ble.sens_count> 0) { 
                         for (size_t i = 0; i < sen_ble_count; i++){
-                            convert_ble_sens_data(sens_ble[i], &data_sens_ble[i]);
+                            set_id_alert(&data_sens_ble[i],last_data_sub_ble);
                         }
+                    }
 
+
+                    state_mqtt = SUB_STATE;
+                    if (sen_ble_count>0){
                         // procesar data de los sensores:
                         char buffer_data[BUFFER_SIZE_DATA/2] ="";
                         convert_data_sens_to_json(data_sens_ble, buffer_data, sen_ble_count);
@@ -559,7 +591,7 @@ int parse_json_to_data(const char* json_string, sub_data_t* data) {
             cJSON *json_sens = cJSON_GetArrayItem(json_sens_array, i);
             strcpy(data->sens[i].mac, cJSON_GetObjectItem(json_sens, "mac")->valuestring);
             data->sens[i].id = cJSON_GetObjectItem(json_sens, "id")->valueint;
-            data->sens[i].tem = cJSON_GetObjectItem(json_sens, "tem")->valuedouble;
+            data->sens[i].tem = cJSON_GetObjectItem(json_sens, "ta")->valuedouble;
         }
     }
 
@@ -575,11 +607,14 @@ void convert_data_sens_to_json(data_sens_t* data, char* buffer, size_t sen_ble_c
 
     for (size_t i = 0; i < sen_ble_count; i++) {
         cJSON *sensor = cJSON_CreateObject();
-        cJSON_AddStringToObject(sensor, "MAC", data[i].mac);
-        cJSON_AddNumberToObject(sensor, "Tem", round(data[i].temperature*1e2)/1e2);
-        cJSON_AddNumberToObject(sensor, "Hum", round(data[i].humidity*1e2)/1e2);
-        cJSON_AddNumberToObject(sensor, "Bat", round(data[i].battery*1e2)/1e2);
+        cJSON_AddStringToObject(sensor, "mac", data[i].mac);
         cJSON_AddNumberToObject(sensor, "Time", (double)data[i].time);
+        cJSON_AddNumberToObject(sensor, "tem", round(data[i].temperature*1e2)/1e2);
+        cJSON_AddNumberToObject(sensor, "hum", round(data[i].humidity*1e2)/1e2);
+        cJSON_AddNumberToObject(sensor, "bat", round(data[i].battery*1e2)/1e2);
+        cJSON_AddNumberToObject(sensor, "id", data[i].id);
+        cJSON_AddNumberToObject(sensor, "ta", round(data[i].temp_alert*1e2)/1e2);
+
         cJSON_AddItemToArray(sensors, sensor);
     }
 
@@ -605,7 +640,7 @@ void print_data_sub(const sub_data_t* data) {
             printf("  Sensor %d:\n", i + 1);
             printf("    MAC: %s\n", data->sens[i].mac);
             printf("    ID: %d\n", data->sens[i].id);
-            printf("    Temperature: %.2f\n", data->sens[i].tem);
+            printf("    TA: %.2f\n", data->sens[i].tem);
         }
     }
 }
@@ -617,6 +652,8 @@ int convert_ble_sens_data(sens_ble_t sensor, data_sens_t *data){
     data->humidity    = Inkbird_humidity(sensor.data_Hx);
     data->time        = sensor.epoch_ts;
     Inkbird_MAC_to_str(sensor, data->mac);
+    data->id = -1;
+    data->temp_alert = 0.0;
     return 0;
 }
 
@@ -713,9 +750,9 @@ void app_main(void)
     cJSON_AddItemToObject(doc,"project",cJSON_CreateString(MASTER_TOPIC));
     cJSON_AddItemToObject(doc,"ota",cJSON_CreateString("true"));
     cJSON_AddItemToObject(doc,"cmd",cJSON_CreateString("false"));
-    cJSON_AddItemToObject(doc,"sw",cJSON_CreateString("1.1"));
-    cJSON_AddItemToObject(doc,"hw",cJSON_CreateString("1.1"));
-    cJSON_AddItemToObject(doc,"otaV",cJSON_CreateString("1.1"));
+    cJSON_AddItemToObject(doc,"sw",cJSON_CreateString(PROJECT_VER));
+    cJSON_AddItemToObject(doc,"hw",cJSON_CreateString(PROJECT_VER));
+    cJSON_AddItemToObject(doc,"otaV",cJSON_CreateString(PROJECT_VER));
     output = cJSON_PrintUnformatted(doc);
 
     printf("Mensaje OTA:\r\n");

@@ -29,6 +29,8 @@ typedef struct {
     float    humidity;
     float    battery;
     time_t   time;
+    int      id;
+    float    temp_alert;
 }data_sens_t;
 
 
