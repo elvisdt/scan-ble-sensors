@@ -38,13 +38,24 @@ int Inkbird_MAC_to_str(sens_ble_t data,char * buffer){
     return 0;
 }
 
+int Inkbird_MAC_to_str_1(sens_ble_t data,char * buffer){
+    char mac_addr[20];
+    char hex_number[4];
+    memset(mac_addr,0x00,sizeof(mac_addr));
+    for (size_t i = 0; i < 6; i++)
+    {
+        sprintf(hex_number,"%02x",data.addr[i]);
+        strcat(mac_addr,hex_number);
+    }
+    mac_addr[strlen(mac_addr)] = 0x00;
+    strcpy(buffer,mac_addr);
+    return 0;
+}
 
 void Inkbird_str_to_MAC(char * str_mac,uint8_t * buffer_mac){
     char * pointer;
     pointer = strtok(str_mac,":");
-
-    for (size_t i = 0; i < 6; i++)
-    {
+    for (size_t i = 0; i < 6; i++){
         buffer_mac[i] = strtol(pointer,NULL,16);
         pointer  = strtok(NULL,":");
     }

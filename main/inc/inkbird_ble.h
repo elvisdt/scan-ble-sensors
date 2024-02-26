@@ -11,7 +11,7 @@
 #include <esp_bt_defs.h>
 #include <stdio.h>
 #include <string.h>
-
+#include "time.h"
 
 #define MAX_BLE_DEVICES 10
 
@@ -43,15 +43,16 @@ typedef struct {
 typedef struct {
     char mac[20];
     int id;
-    float tem;
+    float ta;
 } sub_sens_t;
 
+/*
 typedef struct {
     sub_user_t user;
     sub_sens_t sens[MAX_BLE_DEVICES];
     int sens_count;
 } sub_data_t;
-
+*/
 
 
 /**
@@ -168,7 +169,7 @@ bool Inkbird_check_empty_mac(esp_bd_addr_t mac_addr);
  * @return 0 if successful.
  */
 int Inkbird_MAC_to_str(sens_ble_t data, char *buffer);
-
+int Inkbird_MAC_to_str_1(sens_ble_t data,char * buffer);
 
 
 /**

@@ -35,6 +35,16 @@ typedef enum{
 }state_mqtt_t;
 
 
+#define SMS_MAX_PARTS 10
+/********************************************
+ * STRUCUTRES
+**********************************************/
+typedef struct {
+    char** parts;
+    int count;
+} split_result_t;
+
+
 
 // Set digital status to HIGH
 void activate_pin(int pin_number);
@@ -48,7 +58,10 @@ void config_pin_esp32();
 // Apagamos los leds
 void power_off_leds();
 
+void remove_newlines(char* str);
 
+char* get_middle_part(char* str);
 
+split_result_t split_msg(char* msg);
 //--------------------------------------------------
 #endif /* __GENERAL_ESP32_ */

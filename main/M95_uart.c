@@ -789,3 +789,39 @@ int M95_send_SMS(char *phone, char *msg, int data_len){
 	ret = readAT("+CMGS","ERROR",1000,buff_reciv);
 	return ret;
 }
+
+
+int M95_read_SMS(char* msg, char* phone){
+	int ret = 0;
+	ret = sendAT("AT+CMGF=1\r\n","OK\r\n","ERROR\r\n",5000,buff_reciv);
+	vTaskDelay(pdMS_TO_TICKS(100));
+	
+	ret = sendAT("AT+CMGR=1\r\n","+CMGR: ","OK\r\n",20000,buff_reciv);
+	vTaskDelay(pdMS_TO_TICKS(200));
+	if(ret==1){
+		printf("%s\n",buff_reciv);
+		split_result_t result = split_msg(buff_reciv);
+		printf("El mensaje se ha dividido en %d partes:\n", result.count);
+		for(int i = 0; i < result.count; i++) {
+			printf("Parte %d: %s\n", i, result.parts[i]);
+			if (i==2){
+				sprintf(phone,"%s",result.parts[i]);
+			}
+			
+			if(i==4){
+				char* middle = get_middle_part(result.parts[i]);
+				if (middle!=NULL){
+					printf("sms data: -%s-\n", middle);
+					sprintf(msg,"%s",middle);
+				}else{
+					ret =0;
+				}
+				free(middle);
+				
+			}
+			free(result.parts[i]);
+		}
+		free(result.parts);
+	}
+	return ret;
+}

@@ -12,6 +12,10 @@
         "ota_m95.h": "c",
         "ota_control.h": "c",
         "cjson.h": "c",
-        "gpio.h": "c"
-    }
+        "gpio.h": "c",
+        "esp_gap_ble_api.h": "c",
+        "esp_log.h": "c",
+        "esp_bt_main.h": "c"
+    },
+    "idf.port": "/dev/ttyUSB0"
 }

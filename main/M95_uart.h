@@ -77,8 +77,9 @@ void M95_poweroff();
 int M95_poweroff_command();
 void disconnect_mqtt();
 int get_M95_signal();
-char M95_readSMS(char*);
-void M95_sendSMS(char *mensaje, char *numero);
+
+int M95_send_SMS(char *phone, char *msg, int data_len);
+int M95_read_SMS(char* msg, char* phone);
 
 int readAT(char *ok, char *error, uint32_t timeout, char *response);
 uint8_t TCP_open();

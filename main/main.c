@@ -9,12 +9,19 @@
 
 #include "esp_system.h"
 #include "esp_timer.h"
-#include "esp_bt.h"
+#include <sys/time.h>
+
+#include "esp_gatt_common_api.h"
+#include "esp_gap_ble_api.h"
 #include "esp_gap_ble_api.h"
 #include "esp_gattc_api.h"
 #include "esp_gatt_defs.h"
 #include "esp_bt_main.h"
-#include "esp_gatt_common_api.h"
+#include "esp_log.h"
+#include "esp_bt.h"
+
+
+
 #include "esp_log.h"
 
 
@@ -24,7 +31,6 @@
 #include "freertos/queue.h"
 #include "driver/uart.h"
 #include "driver/gpio.h"
-#include <sys/time.h>
 #include "math.h"
 
 #include "inkbird_ble.h"
@@ -38,7 +44,7 @@
 #include "ota_esp32.h"
 #include "ota_global.h"
 
-#include <cjson.h>
+#include "cJSON.h"
 #include "sdkconfig.h"
 
 /*****************************************************
@@ -52,7 +58,7 @@
 // Read packet timeout
 #define TAG                             "BLE"        // Nombre del TAG
 
-#define BUFFER_SIZE_DATA                (1024) // Define el tamaño del búfer según tus necesidades
+#define BUFFER_SIZE_DATA                (512) // Define el tamaño del búfer según tus necesidades
 #define MODEM_TASK_STACK_SIZE           (2048)
 #define BUF_SIZE_MODEM                  (1024)
 #define RD_BUF_SIZE                     (BUF_SIZE_MODEM)
@@ -93,7 +99,7 @@ static esp_ble_scan_params_t ble_scan_params = {
  * VARIABLES
 *****************************************************/
 static char     IMEI[25];
-static char     TopicData[100];
+static char     TopicBle[150];
 
 //---BLE--//
 
@@ -129,8 +135,9 @@ bool ota_debug = false;
 static bool scanning = false;
 static size_t sen_ble_count = 0;
 sens_ble_t  sens_ble [MAX_BLE_DEVICES]={0};
-data_sens_t data_sens_ble[MAX_BLE_DEVICES]={0};
-static sub_data_t  last_data_sub_ble={0};
+static  data_sens_t data_sens_ble[MAX_BLE_DEVICES]={0};
+static sub_sens_t  list_sens_sub[MAX_BLE_DEVICES]={0};
+
 
 /*****************************************************
  *      FUNCTIONS   
@@ -144,11 +151,11 @@ void ble_scanner_stop(void);
 static void esp_gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t* param);
 int convert_ble_sens_data(sens_ble_t sensor, data_sens_t *data);
 void convert_data_sens_to_json(data_sens_t* data, char* buffer, size_t sen_ble_count);
+void data_sens_to_json(data_sens_t data, char* buffer);
 int mqtt_main_data_pub(char* topic, char * data_str, uint8_t len);
 
-int mqtt_main_data_sub(sub_data_t* data_sub);
-int parse_json_to_data(const char* json_string, sub_data_t* data);
-void print_data_sub(const sub_data_t* data);
+int mqtt_main_data_sub(char *ble_mac, sub_sens_t* data_sub);
+int parse_json_to_alert(const char* json_string, sub_sens_t* data);
 
 void ble_scanner_init(void) {
     // Initialize NVS.
@@ -173,12 +180,16 @@ void ble_scanner_init(void) {
         return;
     }
 
-    ret =  esp_bluedroid_init();
+    // Initialize Bluedroid with configuration
+    esp_bluedroid_config_t bluedroid_cfg = {
+        .ssp_en = true  // Habilita el emparejamiento seguro simple (SSP)
+    };
+
+    ret = esp_bluedroid_init_with_cfg(&bluedroid_cfg);
     if (ret) {
         ESP_LOGE(TAG, "%s init bluetooth failed: %s", __func__, esp_err_to_name(ret));
         return;
     }
-
 
     ret = esp_bluedroid_enable();
     if (ret) {
@@ -201,9 +212,8 @@ void ble_scanner_init(void) {
     if (local_mtu_ret){
         ESP_LOGE(TAG, "set local  MTU failed, error code = %x", local_mtu_ret);
     }
-
-    
 }
+
 
 void ble_scanner_start(void) {
     if (!scanning) {
@@ -368,11 +378,11 @@ void update_scaner_sensors(){
     }
 }
 
-int set_id_alert(data_sens_t* sens_ble, sub_data_t data){
-    for (size_t i = 0; i < data.sens_count; i++){
-        if (strcmp(sens_ble->mac, data.sens[i].mac) == 0){
-            sens_ble->id= data.sens[i].id;
-            sens_ble->temp_alert = data.sens[i].tem;
+int set_id_alert(data_sens_t* sens_ble, sub_sens_t data){
+    for (size_t i = 0; i < sen_ble_count; i++){
+        if (strcmp(sens_ble[i].mac, data.mac) == 0){
+            sens_ble->id= data.id;
+            sens_ble->temp_alert = data.ta;
             return 1;
         }
     }
@@ -387,7 +397,7 @@ static void main_task(void *pvParameters){
     int ret = 0;
 
     // Seteamos el topico donde se publicara los resultados
-    sprintf(TopicData,"%s/%s/DATA",MASTER_TOPIC,IMEI);
+    // sprintf(TopicBle,"%s/%s/DATA",MASTER_TOPIC,IMEI);
 
     time_t time_modem;
     time(&time_modem);
@@ -416,38 +426,51 @@ static void main_task(void *pvParameters){
                 case SUB_STATE:
                     ESP_LOGI(TAG, "---------SUB STATE---------");
                     state_mqtt = PUB_STATE;
-                    // data_sens_ble;
-                    sub_data_t data_sub={0};
-                    ret = mqtt_main_data_sub(&data_sub);
-                    if (ret==1){
-                        last_data_sub_ble = data_sub;
+                    ret = connect_MQTT_server(tcpconnectID);
+                    if(ret ==1){
+                        for (size_t i = 0; i < sen_ble_count; i++){
+                            char ble_mac[20] ={0};
+                            Inkbird_MAC_to_str_1(sens_ble[i], ble_mac); 
+                            ret = mqtt_main_data_sub(ble_mac, &list_sens_sub[i]);
+                            if(ret!=1){
+                                break;
+                            }
+                        }
                     }
+                    disconnect_mqtt(tcpconnectID);
                     // SUSCRIBE
                     break;
                 case PUB_STATE:{
                     ESP_LOGI(TAG,"----------PUB STATE---------");
 
                     // Imprimir datos de los sensores solo si se encontraron en el JSON
-                    if (last_data_sub_ble.sens_count> 0) { 
-                        for (size_t i = 0; i < sen_ble_count; i++){
-                            set_id_alert(&data_sens_ble[i],last_data_sub_ble);
-                        }
+                    for (size_t i = 0; i < sen_ble_count; i++){
+                        set_id_alert(&data_sens_ble[i],list_sens_sub[i]);
                     }
-
-
                     state_mqtt = SUB_STATE;
                     if (sen_ble_count>0){
                         // procesar data de los sensores:
-                        char buffer_data[BUFFER_SIZE_DATA/2] ="";
-                        convert_data_sens_to_json(data_sens_ble, buffer_data, sen_ble_count);
-                        printf("buff: %s\n",buffer_data);
 
-                        ret = mqtt_main_data_pub(TopicData, buffer_data, strlen(buffer_data));
-                        if (ret!=1){
-                            vTaskDelay(pdMS_TO_TICKS(3000));
-                            esp_restart();
+                        // coenctar 
+                        // Establecer conexion MQTT
+                        ret = connect_MQTT_server(tcpconnectID);
+                        // Publicamos el valor leido
+                        char buffer_data[BUFFER_SIZE_DATA/2];
+                        int count = 0;
+                        for (size_t i = 0; i <  sen_ble_count; i++){
+                            sprintf(TopicBle,"%s/%s/%s/data",MASTER_TOPIC,IMEI,data_sens_ble[i].mac);
+                            data_sens_to_json(data_sens_ble[i],buffer_data);
+                            ret = mqtt_main_data_pub(TopicBle, buffer_data, strlen(buffer_data));
+                            if (ret!=1){
+                                break;
+                            }
+                            count ++;
+                            vTaskDelay(pdMS_TO_TICKS(500));
                         }
-                        memset(buffer_data, 0, sizeof(buffer_data));
+                        vTaskDelay(pdMS_TO_TICKS(1000));
+                        disconnect_mqtt();
+                        printf ("number send data: %d\n",count);
+                        printf("buff: %s\n",buffer_data);
                     }
                     }break;
                 default:
@@ -520,20 +543,15 @@ void OTA_check(void){
 }
 
 int mqtt_main_data_pub(char* topic, char * data_str, uint8_t len){
-    int ret = 0;
-    // Establecer conexion MQTT
-    ret = connect_MQTT_server(tcpconnectID);
-    // Publicamos el valor leido
+    int ret = 1;
+
     int intentos_mqtt = 0;
     while (true && ret==1){
         intentos_mqtt ++;
-        if( M95_PubMqtt_data((uint8_t*)data_str, TopicData, len, tcpconnectID) ){
+        if( M95_PubMqtt_data((uint8_t*)data_str, TopicBle, len, tcpconnectID) ){
             vTaskDelay(500/portTICK_PERIOD_MS);
             ESP_LOGI("BLE", "PUBLICANDO ...");
-            char* fecha_n = get_m95_date();
-            if (fecha_n != NULL) {
-                ESP_LOGI(TAG,"Fecha: %s",fecha_n);
-            }
+            printf("data: %s\n",data_str);
             return 1;
         }
         // mas de 5 intentos reset
@@ -544,105 +562,71 @@ int mqtt_main_data_pub(char* topic, char * data_str, uint8_t len){
         vTaskDelay(pdMS_TO_TICKS(500));
         ret= M95_CheckConnection(tcpconnectID);
     }
-    disconnect_mqtt();
     return ret;
 }
 
-int mqtt_main_data_sub(sub_data_t* data_sub){
+int mqtt_main_data_sub(char *ble_mac, sub_sens_t* data_sub){
     int ret=0;
-    char TopicSub[100];
+    char topic_sub[100]={0};
     char* msg_sub_topic  = (char*) malloc(BUFFER_SIZE_DATA/2);
 
-    sprintf(TopicSub,"%s/%s/ALERTA",MASTER_TOPIC,IMEI);
-    ret = connect_MQTT_server(tcpconnectID);
-     if (ret==1) {
-        ret = M95_SubTopic(tcpconnectID, TopicSub, msg_sub_topic);
-        if (ret==1){
-		    ESP_LOGI(TAG, "DATA SUB OK");
-            // printf("%s\n",msg_sub_topic);
-            ret = parse_json_to_data(msg_sub_topic, data_sub);
-            if (ret ==1){
-                print_data_sub(data_sub);
-            }
-            
+    sprintf(topic_sub,"%s/%s/%s/alert",MASTER_TOPIC,IMEI, ble_mac);
+    // ret = 
+    ret = M95_SubTopic(tcpconnectID, topic_sub, msg_sub_topic);
+    if (ret==1){
+        ESP_LOGI(TAG, "DATA SUB OK");
+        // printf("%s\n",msg_sub_topic);
+        ret = parse_json_to_alert(msg_sub_topic, data_sub);
+        if (ret ==1){
+            strcpy(data_sub->mac,ble_mac);
+            printf("sub: %s\n",msg_sub_topic);
+            //print_data_sub(data_sub);
         }
-     }
+    }
+     
     free(msg_sub_topic);
-    disconnect_mqtt();
     return ret;
 }
 
-
-int parse_json_to_data(const char* json_string, sub_data_t* data) {
+int parse_json_to_alert(const char* json_string, sub_sens_t* data_alert) {
     cJSON *json = cJSON_Parse(json_string);
-
-    // Parse user if it exists
-    cJSON *json_user = cJSON_GetObjectItem(json, "user");
-    if (json_user != NULL) {
-        strcpy(data->user.name, cJSON_GetObjectItem(json_user, "name")->valuestring);
-        strcpy(data->user.phone, cJSON_GetObjectItem(json_user, "phone")->valuestring);
-    }
-
-    // Parse sens if it exists
-    cJSON *json_sens_array = cJSON_GetObjectItem(json, "sens");
-    if (json_sens_array != NULL) {
-        data->sens_count = cJSON_GetArraySize(json_sens_array);
-        for (int i = 0; i < data->sens_count; i++) {
-            cJSON *json_sens = cJSON_GetArrayItem(json_sens_array, i);
-            strcpy(data->sens[i].mac, cJSON_GetObjectItem(json_sens, "mac")->valuestring);
-            data->sens[i].id = cJSON_GetObjectItem(json_sens, "id")->valueint;
-            data->sens[i].tem = cJSON_GetObjectItem(json_sens, "ta")->valuedouble;
+    if (json == NULL) {
+        const char *error_ptr = cJSON_GetErrorPtr();
+        if (error_ptr != NULL) {
+            fprintf(stderr, "Error before: %s\n", error_ptr);
         }
+        return 0;
     }
+
+    cJSON *id = cJSON_GetObjectItemCaseSensitive(json, "id");
+    cJSON *ta = cJSON_GetObjectItemCaseSensitive(json, "ta");
+
+    if (!cJSON_IsNumber(id) || !cJSON_IsNumber(ta)) {
+        cJSON_Delete(json);
+        return 0;
+    }
+
+    data_alert->id = id->valueint;
+    data_alert->ta = ta->valuedouble;
 
     cJSON_Delete(json);
-
-    // Return 1 if either user or sens was parsed, 0 otherwise
-    return (json_user != NULL || json_sens_array != NULL) ? 1 : 0;
+    return 1;
 }
 
 
-void convert_data_sens_to_json(data_sens_t* data, char* buffer, size_t sen_ble_count) {
-    cJSON *sensors = cJSON_CreateArray();
-
-    for (size_t i = 0; i < sen_ble_count; i++) {
-        cJSON *sensor = cJSON_CreateObject();
-        cJSON_AddStringToObject(sensor, "mac", data[i].mac);
-        cJSON_AddNumberToObject(sensor, "Time", (double)data[i].time);
-        cJSON_AddNumberToObject(sensor, "tem", round(data[i].temperature*1e2)/1e2);
-        cJSON_AddNumberToObject(sensor, "hum", round(data[i].humidity*1e2)/1e2);
-        cJSON_AddNumberToObject(sensor, "bat", round(data[i].battery*1e2)/1e2);
-        cJSON_AddNumberToObject(sensor, "id", data[i].id);
-        cJSON_AddNumberToObject(sensor, "ta", round(data[i].temp_alert*1e2)/1e2);
-
-        cJSON_AddItemToArray(sensors, sensor);
-    }
-
-    cJSON *root = cJSON_CreateObject();
-    cJSON_AddItemToObject(root, "Sensors", sensors);
-
-    char *json = cJSON_PrintUnformatted(root);
+void data_sens_to_json(data_sens_t data, char* buffer) {
+    cJSON *sensor = cJSON_CreateObject();
+    cJSON_AddNumberToObject(sensor, "time", (double)data.time);
+    cJSON_AddNumberToObject(sensor, "tem", round(data.temperature*1e2)/1e2);
+    cJSON_AddNumberToObject(sensor, "hum", round(data.humidity*1e2)/1e2);
+    cJSON_AddNumberToObject(sensor, "bat", round(data.battery*1e2)/1e2);
+    cJSON_AddNumberToObject(sensor, "id",  data.id);
+    cJSON_AddNumberToObject(sensor, "ta",  round(data.temp_alert*1e2)/1e2);
+    
+    char *json = cJSON_PrintUnformatted(sensor);
     strcpy(buffer, json);
-    cJSON_Delete(root);
+    cJSON_Delete(sensor);
     free(json);
-}
-
-void print_data_sub(const sub_data_t* data) {
-    // Imprimir datos del usuario
-    printf("User:\n");
-    printf("  Name: %s\n", data->user.name);
-    printf("  Phone: %s\n", data->user.phone);
-
-    // Imprimir datos de los sensores solo si se encontraron en el JSON
-    if (data->sens_count > 0) {
-        printf("Sensors:\n");
-        for (int i = 0; i < data->sens_count; i++) {
-            printf("  Sensor %d:\n", i + 1);
-            printf("    MAC: %s\n", data->sens[i].mac);
-            printf("    ID: %d\n", data->sens[i].id);
-            printf("    TA: %.2f\n", data->sens[i].tem);
-        }
-    }
 }
 
 
@@ -651,7 +635,7 @@ int convert_ble_sens_data(sens_ble_t sensor, data_sens_t *data){
     data->temperature = Inkbird_temperature(sensor.data_Hx);
     data->humidity    = Inkbird_humidity(sensor.data_Hx);
     data->time        = sensor.epoch_ts;
-    Inkbird_MAC_to_str(sensor, data->mac);
+    Inkbird_MAC_to_str_1(sensor, data->mac);
     data->id = -1;
     data->temp_alert = 0.0;
     return 0;
