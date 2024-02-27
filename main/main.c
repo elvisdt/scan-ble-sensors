@@ -588,8 +588,10 @@ int mqtt_main_data_sub(char *ble_mac, sub_sens_t* data_sub){
     return ret;
 }
 
+
 int parse_json_to_alert(const char* json_string, sub_sens_t* data_alert) {
     cJSON *json = cJSON_Parse(json_string);
+
     if (json == NULL) {
         const char *error_ptr = cJSON_GetErrorPtr();
         if (error_ptr != NULL) {
